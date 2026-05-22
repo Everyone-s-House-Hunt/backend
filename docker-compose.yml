@@ -9,7 +9,6 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
-    env_file: .env
     ports:
       - "${GO_PORT}:8080"
     volumes:
@@ -22,9 +21,8 @@ services:
         condition: service_healthy
   db:
     image: mysql:8.0
-    env_file: .env
     ports:
-      - "3636:3306"
+      - "${DB_PORT}:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASS}
       - MYSQL_DATABASE=${DB_NAME}
