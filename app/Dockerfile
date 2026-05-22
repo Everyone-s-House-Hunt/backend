@@ -1,4 +1,4 @@
-FROM golang:1.23
+FROM golang:1.25
 
 WORKDIR /app
 
@@ -6,7 +6,7 @@ RUN curl -sSfL https://raw.githubusercontent.com/air-verse/air/master/install.sh
 
 COPY . .
 
-#RUN go mod download
+RUN go mod tidy
 
 EXPOSE 8080
 
