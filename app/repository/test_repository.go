@@ -1,17 +1,22 @@
 package repository
 
 import (
-	"database/sql"
+	"gorm.io/gorm"
 )
 
 type TestRepository struct {
-	DB *sql.DB
+	DB *gorm.DB
 }
 
-func NewTestRepository(db *sql.DB) *TestRepository {
+func NewTestRepository(db *gorm.DB) *TestRepository {
 	return &TestRepository{DB: db}
 }
 
-func (r *TestRepository) PingDB()  error {
-	return r.DB.Ping()
+func (r *TestRepository) PingDB() error {
+	sqlDB, err := r.DB.DB()
+	if err != nil {
+		return err
+	}
+
+	return sqlDB.Ping()
 }

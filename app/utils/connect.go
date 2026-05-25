@@ -1,15 +1,16 @@
 package utils
 
 import (
-	"database/sql"
 	"os"
 	"fmt"
 	"log"
 
-	_ "github.com/go-sql-driver/mysql"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"house-hunt/model"
 )
 
-func InitDB() *sql.DB {
+func InitDB() *gorm.DB {
 	user := os.Getenv("DB_USER")
 	password := os.Getenv("DB_PASS")
 	host := os.Getenv("DB_HOST")
@@ -17,16 +18,20 @@ func InitDB() *sql.DB {
 	dbname := os.Getenv("DB_NAME")
 
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, password, host, port, dbname)
-	fmt.Printf("DSN: %s\n", dsn)
-	db, err := sql.Open("mysql", dsn)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("接続設定エラー: %v", err)
 	}
 
-	err = db.Ping()
+	err = db.AutoMigrate(
+		&model.User{},
+		&model.Subscription{},
+		&model.Question{},
+	)
 	if err != nil {
-		log.Fatalf("データベース接続エラー: %v", err)
+		log.Fatalf("マイグレーションエラー: %v", err)
 	}
-	fmt.Println("データベースに接続成功")
+
+	fmt.Println("データベース接続成功")
 	return db
 }

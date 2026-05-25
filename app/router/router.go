@@ -1,7 +1,7 @@
 package router
 
 import (
-	"database/sql"
+	"gorm.io/gorm"
 	"house-hunt/handler"
 	"house-hunt/repository"
 	"house-hunt/service"
@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter(db *sql.DB) *gin.Engine {
+func SetupRouter(db *gorm.DB) *gin.Engine {
 	r := gin.Default()
 
 	testRepo := repository.NewTestRepository(db)
