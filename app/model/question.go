@@ -9,6 +9,6 @@ type Question struct {
 	AnswerData    string    `gorm:"type:json;not null" json:"answer_data"`
 	GameMode      string    `gorm:"type:varchar(30);not null" json:"game_mode"`
 	Status        string    `gorm:"type:varchar(20);not null;default:'pending'" json:"status"`
-	CreatedAt     time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	CreatedAt     time.Time `gorm:"not null;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
 	CreatorUser   User      `gorm:"foreignKey:CreatorUserID;constraint:OnDelete:CASCADE;" json:"-"`
 }
