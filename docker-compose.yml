@@ -4,7 +4,10 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
     ports:
-      - "3303:3000"
+      - "${VITE_PORT}:${VITE_PORT}"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
   backend:
     build:
       context: ./app
