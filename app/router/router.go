@@ -16,8 +16,14 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 	testService := service.NewTestService(testRepo)
 	testHandler := handler.NewTestHandler(testService)
 
+	userRepo := repository.NewUserRepository(db)
+	userService := service.NewUserService(userRepo)
+	userhandler := handler.NewUserHandler(userService)
+
 	// ルーティングの設定
 	r.GET("/health", testHandler.HealthCheck)
+
+	r.POST("/register", userhandler.Register)
 
 	return r
 }
