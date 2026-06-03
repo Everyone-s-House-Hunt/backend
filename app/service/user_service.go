@@ -27,6 +27,7 @@ func (s *UserService) Register(username, email, password string) (*model.User, e
 		Email:    email,
 		PasswordHash: hashedPassword,
 		IsPremium: false,
+		CreatedAt: utils.GetTimeJST(),
 	}
 	err = s.Repo.CreateUser(user)
 	if err != nil {
