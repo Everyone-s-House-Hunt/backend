@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>WebSocket Test — イノシシパニック</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 20px auto; padding: 0 16px; }
+  h2 { margin-top: 0; }
+  input, button, select { font-size: 1rem; padding: 6px 10px; margin: 4px 2px; }
+  button { cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #screen > div { display: none; }
+  #screen > div.active { display: block; }
+  #players { list-style: none; padding: 0; }
+  #players li { padding: 4px 0; }
+  .choice-btn { font-size: 1.2rem; padding: 12px 24px; margin: 8px; }
+  .choice-btn:disabled { background: #ccc; }
+  #result-box { border: 2px solid #333; padding: 12px; margin: 10px 0; border-radius: 6px; }
+  #log-area { background: #111; color: #0f0; font-family: monospace; font-size: 0.8rem;
+               padding: 8px; height: 180px; overflow-y: auto; margin-top: 20px; border-radius: 4px; }
+  .server-url { font-size: 0.85rem; color: #666; }
+  #vote-status { color: #555; }
+</style>
+</head>
+<body>
+
+<h2>イノシシパニック — テストクライアント</h2>
+<p class="server-url">
+  サーバー: <input id="server-url" value="ws://localhost:8080" size="30">
+</p>
+
+<div id="screen">
+
+  <!-- ログイン画面 -->
+  <div id="login-screen" class="active">
+    <p>ニックネーム: <input id="nickname" placeholder="たろう" size="16"></p>
+    <button id="create-btn">ルーム作成</button>
+    <button id="join-btn">ルームに参加</button>
+    <span id="room-id-input" style="display:none">
+      ルームID: <input id="join-room-id" placeholder="A3KF9X" size="8" maxlength="6">
+      <button id="join-confirm-btn">接続</button>
+    </span>
+  </div>
+
+  <!-- ロビー画面 -->
+  <div id="lobby-screen">
+    <h3>ロビー — ルームID: <span id="lobby-room-id"></span></h3>
+    <p>プレイヤー一覧:</p>
+    <ul id="players"></ul>
+    <button id="start-btn" style="display:none">ゲーム開始</button>
+    <p id="waiting-msg" style="color:#888">ホストがゲームを開始するのを待っています...</p>
+  </div>
+
+  <!-- ゲーム画面 -->
+  <div id="game-screen">
+    <p id="round-info"></p>
+    <p id="timer" style="font-size:1.4rem;font-weight:bold;"></p>
+    <h3 id="question-text"></h3>
+    <div>
+      <button class="choice-btn" id="choice-0"></button>
+      <button class="choice-btn" id="choice-1"></button>
+    </div>
+    <p id="vote-status"></p>
+    <div id="result-box" style="display:none"></div>
+  </div>
+
+  <!-- 終了画面 -->
+  <div id="end-screen">
+    <h3 id="end-title"></h3>
+    <p id="end-detail"></p>
+    <button onclick="location.reload()">タイトルに戻る</button>
+  </div>
+
+</div>
+
+<div id="log-area"></div>
+
+<script>
+let ws = null;
+let myPlayerID = null;
+let isHost = false;
+let currentRound = 0;
+let hasVoted = false;
+let roomID = null;
+// カウントダウン用タイマーID（停止中は null）
+let timerInterval = null;
+
+// 制限時間のカウントダウン開始。seconds はサーバーから来る制限時間。
+function startTimer(seconds) {
+  stopTimer(); // 前ラウンドのタイマーが残らないよう先に止める
+  let remaining = seconds;
+  const el = document.getElementById('timer');
+  const render = () => {
+    el.textContent = `残り ${remaining} 秒`;
+    el.style.color = remaining <= 5 ? '#c00' : '#333'; // 残り5秒以下は赤
+  };
+  render();
+  // 1秒ごとに減らして再描画
+  timerInterval = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      remaining = 0;
+      render();
+      stopTimer();
+      return;
+    }
+    render();
+  }, 1000);
+}
+
+// カウントダウンを止める
+function stopTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+}
+
+function log(msg) {
+  const el = document.getElementById('log-area');
+  const t = new Date().toLocaleTimeString();
+  el.textContent += `[${t}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function showScreen(id) {
+  document.querySelectorAll('#screen > div').forEach(d => d.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function generateRoomID() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+
+function connect(rid) {
+  const nickname = document.getElementById('nickname').value.trim();
+  if (!nickname) { alert('ニックネームを入力してください'); return; }
+
+  const base = document.getElementById('server-url').value.trim();
+  roomID = rid;
+  const url = `${base}/ws/rooms/${roomID}`;
+  log(`接続中: ${url}`);
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    log('WebSocket接続完了');
+    send({ type: 'room:join', payload: { nickname } });
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { log('parse error: ' + e.data); return; }
+    log(`受信: ${JSON.stringify(msg)}`);
+    handleMessage(msg);
+  };
+
+  ws.onclose = (e) => {
+    log(`切断 code=${e.code} reason=${e.reason}`);
+  };
+
+  ws.onerror = (e) => {
+    log('WebSocketエラー');
+  };
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const json = JSON.stringify(obj);
+    log(`送信: ${json}`);
+    ws.send(json);
+  }
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+
+    case 'room:joined': {
+      myPlayerID = msg.payload.player_id;
+      isHost = msg.payload.is_host;
+      document.getElementById('lobby-room-id').textContent = roomID;
+      renderPlayers(msg.payload.players);
+      if (isHost) {
+        document.getElementById('start-btn').style.display = 'inline';
+        document.getElementById('waiting-msg').style.display = 'none';
+      }
+      showScreen('lobby-screen');
+      break;
+    }
+
+    case 'room:player_joined': {
+      renderPlayers(msg.payload.players);
+      break;
+    }
+
+    case 'room:destroyed': {
+      stopTimer();
+      log(`ルーム破棄: ${msg.payload.reason}`);
+      showScreen('end-screen');
+      document.getElementById('end-title').textContent = 'ルームが解散されました';
+      document.getElementById('end-detail').textContent =
+        `プレイヤーが切断しました (${msg.payload.disconnected_player_id})`;
+      if (ws) ws.close();
+      break;
+    }
+
+    case 'game:round_start': {
+      const p = msg.payload;
+      currentRound = p.round;
+      hasVoted = false;
+      document.getElementById('round-info').textContent =
+        `ラウンド ${p.round} / ${p.total_rounds}  (制限時間: ${p.time_limit_sec}秒)`;
+      document.getElementById('question-text').textContent = p.question;
+      document.getElementById('choice-0').textContent = `A: ${p.choices[0]}`;
+      document.getElementById('choice-1').textContent = `B: ${p.choices[1]}`;
+      document.getElementById('choice-0').disabled = false;
+      document.getElementById('choice-1').disabled = false;
+      document.getElementById('vote-status').textContent = '';
+      document.getElementById('result-box').style.display = 'none';
+      startTimer(p.time_limit_sec); // カウントダウン開始
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:vote_received': {
+      const p = msg.payload;
+      document.getElementById('vote-status').textContent =
+        `投票済み: ${p.voted_count} / ${p.total_count} 人`;
+      break;
+    }
+
+    case 'game:round_result': {
+      stopTimer(); // 判定が出たのでカウントダウン停止
+      document.getElementById('timer').textContent = '';
+      const p = msg.payload;
+      const box = document.getElementById('result-box');
+      const choiceLabels = ['A', 'B'];
+      const correct = choiceLabels[p.correct_index];
+      let html = `<strong>結果: ${p.result === 'correct' ? '✓ 正解!' : p.result === 'wrong' ? '✗ 不正解' : '引き分け'}</strong><br>`;
+      html += `正解: ${correct}<br>`;
+      for (let i = 0; i <= 1; i++) {
+        const voters = (p.votes[String(i)] || []).length;
+        html += `${choiceLabels[i]}: ${voters}票  `;
+      }
+      if (p.no_vote && p.no_vote.length > 0) html += `<br>棄権: ${p.no_vote.length}人`;
+      box.innerHTML = html;
+      box.style.display = 'block';
+      document.getElementById('choice-0').disabled = true;
+      document.getElementById('choice-1').disabled = true;
+      break;
+    }
+
+    case 'game:over': {
+      stopTimer(); // round_result を挟まず終了する場合もあるので念のため
+      const p = msg.payload;
+      showScreen('end-screen');
+      document.getElementById('end-title').textContent = 'ゲームオーバー';
+      const reasons = {
+        wrong_answer: '多数派が不正解でした',
+        tie: '同票でした',
+        timeout_tie: 'タイムアウト後に同票でした',
+      };
+      document.getElementById('end-detail').textContent =
+        `${reasons[p.reason] || p.reason}（ラウンド ${p.final_round}）`;
+      break;
+    }
+
+    case 'game:clear': {
+      showScreen('end-screen');
+      document.getElementById('end-title').textContent = '🎉 全ラウンドクリア！';
+      document.getElementById('end-detail').textContent =
+        `全${msg.payload.total_rounds}問を正解しました！`;
+      break;
+    }
+
+    case 'error': {
+      log(`サーバーエラー: ${msg.payload.message}`);
+      alert(`エラー: ${msg.payload.message}`);
+      break;
+    }
+  }
+}
+
+function renderPlayers(players) {
+  const ul = document.getElementById('players');
+  ul.innerHTML = '';
+  players.forEach(p => {
+    const li = document.createElement('li');
+    li.textContent = `${p.nickname || '(未入室)'}${p.is_host ? ' 👑' : ''}${p.player_id === myPlayerID ? ' (あなた)' : ''}`;
+    ul.appendChild(li);
+  });
+}
+
+document.getElementById('create-btn').onclick = () => {
+  connect(generateRoomID());
+};
+
+document.getElementById('join-btn').onclick = () => {
+  const span = document.getElementById('room-id-input');
+  span.style.display = span.style.display === 'none' ? 'inline' : 'none';
+};
+
+document.getElementById('join-confirm-btn').onclick = () => {
+  const rid = document.getElementById('join-room-id').value.trim().toUpperCase();
+  if (rid.length !== 6) { alert('ルームIDは6文字です'); return; }
+  connect(rid);
+};
+
+document.getElementById('start-btn').onclick = () => {
+  send({ type: 'game:start', payload: {} });
+};
+
+document.getElementById('choice-0').onclick = () => vote(0);
+document.getElementById('choice-1').onclick = () => vote(1);
+
+function vote(index) {
+  if (hasVoted) return;
+  hasVoted = true;
+  document.getElementById('choice-0').disabled = true;
+  document.getElementById('choice-1').disabled = true;
+  send({ type: 'game:vote', payload: { choice_index: index } });
+}
+</script>
+</body>
+</html>
