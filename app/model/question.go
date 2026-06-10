@@ -7,7 +7,9 @@ type Question struct {
 	CreatorUserID string    `gorm:"type:varchar(36);not null" json:"creator_user_id"`
 	Body          string    `gorm:"type:text;not null" json:"body"`
 	AnswerData    string    `gorm:"type:json;not null" json:"answer_data"`
+	Explanation   string    `gorm:"type:text;not null" json:"explanation"`
 	GameMode      string    `gorm:"type:varchar(30);not null" json:"game_mode"`
+	Difficulty    int       `gorm:"type:int;not null" json:"difficulty"`
 	Status        string    `gorm:"type:varchar(20);not null;default:'pending'" json:"status"`
 	CreatedAt     time.Time `gorm:"not null;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
 	CreatorUser   User      `gorm:"foreignKey:CreatorUserID;constraint:OnDelete:CASCADE;" json:"-"`
