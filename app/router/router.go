@@ -20,10 +20,22 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 	userService := service.NewUserService(userRepo)
 	userhandler := handler.NewUserHandler(userService)
 
-	// ルーティングの設定
-	r.GET("/health", testHandler.HealthCheck)
+	questionRepo := repository.NewQuestionRepository(db)
+	questionService := service.NewQuestionService(questionRepo)
+	questionHandler := handler.NewQuestionHandler(questionService)
 
-	r.POST("/register", userhandler.Register)
+	{
+		r.GET("/health", testHandler.HealthCheck)
+
+		//ユーザー作成のルーティング
+		r.POST("/register", userhandler.Register)
+
+		//問題のルーティング
+		questionsGroup := r.Group("/questions")
+		{
+			questionsGroup.GET("", questionHandler.GetQuestions)
+		}
+	}
 
 	return r
 }
