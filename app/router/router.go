@@ -34,6 +34,7 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 		questionsGroup := r.Group("/questions")
 		{
 			questionsGroup.GET("", questionHandler.GetQuestions)
+			questionsGroup.POST("", questionHandler.CreateQuestion)
 		}
 	}
 

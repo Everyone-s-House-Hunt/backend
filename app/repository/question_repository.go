@@ -28,3 +28,7 @@ func (r *QuestionRepository) GetQestions(gameMode string, limit int) ([]model.Qu
 
 	return questions, nil
 }
+
+func (r *QuestionRepository) CreateQuestion(q *model.Question) error {
+	return r.db.Create(q).Error
+}
