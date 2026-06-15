@@ -4,6 +4,7 @@ import (
 	"house-hunt/model"
 
 	"gorm.io/gorm"
+	"errors"
 )
 
 type QuestionRepository struct {
@@ -42,4 +43,17 @@ func (r *QuestionRepository) GetRandomByGameMode(gameMode string, limit int) ([]
 		Limit(limit).
 		Find(&questions).Error
 	return questions, err
+}
+
+func (r *QuestionRepository) UpdateQuestionStatus(id string, status string) error {
+	result := r.db.Model(&model.Question{}).Where("id = ?", id).Update("status", status)
+	
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("指定されたIDの問題が見つかりません")
+	}
+	
+	return nil
 }
