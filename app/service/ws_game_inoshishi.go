@@ -14,7 +14,7 @@ import (
 const (
 	inoshishiGameMode       = "inoshishi_panic"
 	inoshishiQuestions      = 10 // 出題数
-	inoshishiTimeLimitSec   = 15 // 制限時間
+	inoshishiTimeLimitSec   = 10 // 制限時間
 	inoshishiResultPauseSec = 3  // 結果表示〜次ラウンドの間
 )
 
