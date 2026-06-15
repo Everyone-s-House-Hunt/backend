@@ -6,19 +6,38 @@ import (
 	"gorm.io/gorm"
 )
 
-// questions テーブルへのアクセス担当
 type QuestionRepository struct {
-	DB *gorm.DB
+	db *gorm.DB
 }
 
 func NewQuestionRepository(db *gorm.DB) *QuestionRepository {
-	return &QuestionRepository{DB: db}
+	return &QuestionRepository{db: db}
+}
+
+func (r *QuestionRepository) GetQestions(gameMode string, limit int) ([]model.Question, error) {
+	var questions []model.Question
+
+	levelLimit := (limit + 4) / 5
+
+	subQuery := r.db.Model(&model.Question{}).Select("*, ROW_NUMBER() OVER (PARTITION BY difficulty ORDER BY RAND()) as rn").Where("game_mode = ? AND status = ?", gameMode, "approved")
+
+	err := r.db.Table("(?) as ranked_questions", subQuery).Select("id", "body", "answer_data", "explanation", "difficulty").Where("rn <= ?", levelLimit).Order("difficulty ASC, rn ASC").Limit(limit).Find(&questions).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return questions, nil
+}
+
+func (r *QuestionRepository) CreateQuestion(q *model.Question) error {
+	return r.db.Create(q).Error
 }
 
 // 指定モードの承認済み問題をランダムに最大 limit 件取得する
 func (r *QuestionRepository) GetRandomByGameMode(gameMode string, limit int) ([]model.Question, error) {
 	var questions []model.Question
-	err := r.DB.Where("game_mode = ? AND status = ?", gameMode, "approved").
+	err := r.db.Where("game_mode = ? AND status = ?", gameMode, "approved").
 		Order("RAND()"). // 毎回ランダムな順で出題
 		Limit(limit).
 		Find(&questions).Error
