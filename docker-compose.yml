@@ -19,6 +19,11 @@ services:
     working_dir: /app
     environment:
       - GO_PORT=${GO_PORT}
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
     depends_on:
       db:
         condition: service_healthy

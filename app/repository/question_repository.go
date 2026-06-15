@@ -2,6 +2,7 @@ package repository
 
 import (
 	"house-hunt/model"
+
 	"gorm.io/gorm"
 	"errors"
 )
@@ -32,6 +33,16 @@ func (r *QuestionRepository) GetQestions(gameMode string, limit int) ([]model.Qu
 
 func (r *QuestionRepository) CreateQuestion(q *model.Question) error {
 	return r.db.Create(q).Error
+}
+
+// 指定モードの承認済み問題をランダムに最大 limit 件取得する
+func (r *QuestionRepository) GetRandomByGameMode(gameMode string, limit int) ([]model.Question, error) {
+	var questions []model.Question
+	err := r.db.Where("game_mode = ? AND status = ?", gameMode, "approved").
+		Order("RAND()"). // 毎回ランダムな順で出題
+		Limit(limit).
+		Find(&questions).Error
+	return questions, err
 }
 
 func (r *QuestionRepository) UpdateQuestionStatus(id string, status string) error {

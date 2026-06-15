@@ -24,6 +24,10 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 	questionService := service.NewQuestionService(questionRepo)
 	questionHandler := handler.NewQuestionHandler(questionService)
 
+	// WebSocket 配線。RoomManager は全体で1つだけ生成し共有する。
+	roomManager := service.NewRoomManager(questionRepo)
+	wsHandler := handler.NewWSHandler(roomManager)
+
 	{
 		r.GET("/health", testHandler.HealthCheck)
 
@@ -41,6 +45,9 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 			// 問題の承認ステータス更新
 			questionsGroup.PATCH("/:id/status", questionHandler.UpdateQuestionStatus)
 		}
+
+		// :roomID はフロントが生成した6桁ルームID
+		r.GET("/ws/rooms/:roomID", wsHandler.Connect)
 	}
 
 	return r
