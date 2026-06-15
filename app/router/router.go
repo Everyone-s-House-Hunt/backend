@@ -33,8 +33,13 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 		//問題のルーティング
 		questionsGroup := r.Group("/questions")
 		{
+			// ゲームモードごとの問題取得
 			questionsGroup.GET("", questionHandler.GetQuestions)
+			// 問題の作成
 			questionsGroup.POST("", questionHandler.CreateQuestion)
+
+			// 問題の承認ステータス更新
+			questionsGroup.PATCH("/:id/status", questionHandler.UpdateQuestionStatus)
 		}
 	}
 

@@ -56,3 +56,7 @@ func (s *QuestionService) CreateQuestion(req dto.CreateQuestionRequest) (*model.
 
 	return question, nil
 }
+
+func (s *QuestionService) UpdateQuestionStatus(id string, req dto.UpdateQuestionStatusRequest) error {
+	return s.repo.UpdateQuestionStatus(id, req.Status)
+}
