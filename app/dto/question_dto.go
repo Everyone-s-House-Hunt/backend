@@ -27,3 +27,7 @@ type CreateQuestionRequest struct {
 	GameMode      string   `json:"game_mode" binding:"required"`
 	Difficulty    int      `json:"difficulty" binding:"required,min=1,max=5"`
 }
+
+type UpdateQuestionStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=approved pending"`
+}

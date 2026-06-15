@@ -3,6 +3,7 @@ package repository
 import (
 	"house-hunt/model"
 	"gorm.io/gorm"
+	"errors"
 )
 
 type QuestionRepository struct {
@@ -31,4 +32,17 @@ func (r *QuestionRepository) GetQestions(gameMode string, limit int) ([]model.Qu
 
 func (r *QuestionRepository) CreateQuestion(q *model.Question) error {
 	return r.db.Create(q).Error
+}
+
+func (r *QuestionRepository) UpdateQuestionStatus(id string, status string) error {
+	result := r.db.Model(&model.Question{}).Where("id = ?", id).Update("status", status)
+	
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("指定されたIDの問題が見つかりません")
+	}
+	
+	return nil
 }
