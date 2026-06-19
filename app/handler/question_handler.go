@@ -88,12 +88,10 @@ func (h *QuestionHandler) CreateQuestion(c *gin.Context) {
 }
 
 func (h *QuestionHandler) UpdateQuestionStatus(c *gin.Context) {
-	// URLパラメータから :id を取得
 	id := c.Param("id")
 	
 	var req dto.UpdateQuestionStatusRequest
 
-	// JSONボディのパースと oneof バリデーションの実行
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "Error",
@@ -103,9 +101,7 @@ func (h *QuestionHandler) UpdateQuestionStatus(c *gin.Context) {
 		return
 	}
 
-	// Service層へ更新処理を委譲
 	if err := h.Service.UpdateQuestionStatus(id, req); err != nil {
-		// IDが存在しない等のエラーハンドリング
 		if err.Error() == "指定されたIDの問題が見つかりません" {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status":  "Error",
@@ -120,7 +116,6 @@ func (h *QuestionHandler) UpdateQuestionStatus(c *gin.Context) {
 		return
 	}
 
-	// 正常完了レスポンス
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "OK",
 		"message": "問題のステータスを更新しました",

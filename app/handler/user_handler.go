@@ -2,6 +2,7 @@ package handler
 
 import (
 	"house-hunt/service"
+	"house-hunt/dto"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -40,7 +41,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusCreated, gin.H{
 		"status": "OK",
 		"message": "User registered successfully",
 		"user": gin.H{
@@ -49,5 +50,32 @@ func (h *UserHandler) Register(c *gin.Context) {
 			"is_premium": user.IsPremium,
 			"created_at": user.CreatedAt,
 		},
+	})
+}
+
+func (h *UserHandler) Login(c *gin.Context) {
+	var req dto.LoginRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "Error",
+			"message": "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	accessToken, refreshToken, err := h.Service.Login(req)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "Error",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "OK",
+		"access_token": accessToken,
+		"refresh_token": refreshToken,
 	})
 }

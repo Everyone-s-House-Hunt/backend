@@ -30,6 +30,9 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 		//ユーザー作成のルーティング
 		r.POST("/register", userhandler.Register)
 
+		//ユーザーログインのルーティング
+		r.POST("/login", userhandler.Login)
+
 		//問題のルーティング
 		questionsGroup := r.Group("/questions")
 		{
