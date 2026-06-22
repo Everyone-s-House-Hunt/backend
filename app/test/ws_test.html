@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>WebSocket Test — イノシシパニック</title>
+<title>WebSocket Test — マルチゲーム</title>
 <style>
   body { font-family: sans-serif; max-width: 700px; margin: 20px auto; padding: 0 16px; }
   h2 { margin-top: 0; }
@@ -15,16 +15,18 @@
   #players li { padding: 4px 0; }
   .choice-btn { font-size: 1.2rem; padding: 12px 24px; margin: 8px; }
   .choice-btn:disabled { background: #ccc; }
+  #answer-input { font-size: 1.3rem; width: 60%; }
   #result-box { border: 2px solid #333; padding: 12px; margin: 10px 0; border-radius: 6px; }
   #log-area { background: #111; color: #0f0; font-family: monospace; font-size: 0.8rem;
                padding: 8px; height: 180px; overflow-y: auto; margin-top: 20px; border-radius: 4px; }
   .server-url { font-size: 0.85rem; color: #666; }
   #vote-status { color: #555; }
+  #turn-info { font-size: 1.1rem; font-weight: bold; }
 </style>
 </head>
 <body>
 
-<h2>イノシシパニック — テストクライアント</h2>
+<h2>テストクライアント — イノシシパニック / モジオーダー</h2>
 <p class="server-url">
   サーバー: <input id="server-url" value="ws://localhost:8080" size="30">
 </p>
@@ -47,6 +49,13 @@
     <h3>ロビー — ルームID: <span id="lobby-room-id"></span></h3>
     <p>プレイヤー一覧:</p>
     <ul id="players"></ul>
+    <span id="mode-select" style="display:none">
+      ゲーム:
+      <select id="game-mode">
+        <option value="panic">イノシシパニック（二択投票）</option>
+        <option value="order">モジオーダー（順番に回答）</option>
+      </select>
+    </span>
     <button id="start-btn" style="display:none">ゲーム開始</button>
     <p id="waiting-msg" style="color:#888">ホストがゲームを開始するのを待っています...</p>
   </div>
@@ -56,11 +65,21 @@
     <p id="round-info"></p>
     <p id="timer" style="font-size:1.4rem;font-weight:bold;"></p>
     <h3 id="question-text"></h3>
-    <div>
+
+    <!-- イノシシパニック用 -->
+    <div id="inoshishi-area">
       <button class="choice-btn" id="choice-0"></button>
       <button class="choice-btn" id="choice-1"></button>
+      <p id="vote-status"></p>
     </div>
-    <p id="vote-status"></p>
+
+    <!-- モジオーダー用 -->
+    <div id="order-area" style="display:none">
+      <p id="turn-info"></p>
+      <input id="answer-input" placeholder="答えを入力" autocomplete="off" disabled>
+      <button id="answer-btn" disabled>回答</button>
+    </div>
+
     <div id="result-box" style="display:none"></div>
   </div>
 
@@ -82,8 +101,17 @@ let isHost = false;
 let currentRound = 0;
 let hasVoted = false;
 let roomID = null;
+let gameMode = null;           // 'panic' | 'order'（最初のゲームメッセージで確定）
+let isMyTurn = false;          // モジオーダー：今が自分の番か
+let latestPlayers = [];        // player_id → nickname 解決用に最新の一覧を保持
 // カウントダウン用タイマーID（停止中は null）
 let timerInterval = null;
+
+// player_id からニックネームを引く（不明なら短縮ID）
+function nick(id) {
+  const p = latestPlayers.find(x => x.player_id === id);
+  return p ? (p.nickname || '(未入室)') : id.slice(0, 6);
+}
 
 // 制限時間のカウントダウン開始。seconds はサーバーから来る制限時間。
 function startTimer(seconds) {
@@ -181,10 +209,12 @@ function handleMessage(msg) {
     case 'room:joined': {
       myPlayerID = msg.payload.player_id;
       isHost = msg.payload.is_host;
+      latestPlayers = msg.payload.players;
       document.getElementById('lobby-room-id').textContent = roomID;
       renderPlayers(msg.payload.players);
       if (isHost) {
         document.getElementById('start-btn').style.display = 'inline';
+        document.getElementById('mode-select').style.display = 'inline';
         document.getElementById('waiting-msg').style.display = 'none';
       }
       showScreen('lobby-screen');
@@ -192,6 +222,7 @@ function handleMessage(msg) {
     }
 
     case 'room:player_joined': {
+      latestPlayers = msg.payload.players;
       renderPlayers(msg.payload.players);
       break;
     }
@@ -207,7 +238,11 @@ function handleMessage(msg) {
       break;
     }
 
+    // === イノシシパニック ===
     case 'game:round_start': {
+      gameMode = 'panic';
+      document.getElementById('inoshishi-area').style.display = 'block';
+      document.getElementById('order-area').style.display = 'none';
       const p = msg.payload;
       currentRound = p.round;
       hasVoted = false;
@@ -253,24 +288,77 @@ function handleMessage(msg) {
       break;
     }
 
+    // === モジオーダー ===
+    case 'game:turn_start': {
+      gameMode = 'order';
+      document.getElementById('inoshishi-area').style.display = 'none';
+      document.getElementById('order-area').style.display = 'block';
+      const p = msg.payload;
+      currentRound = p.round;
+      isMyTurn = (p.current_player_id === myPlayerID);
+
+      const dir = p.direction === 'reading_to_kanji'
+        ? '読み → 漢字に直してください'
+        : '漢字 → 読み（ひらがな）を答えてください';
+
+      document.getElementById('round-info').textContent =
+        `${p.round} / ${p.total_rounds} 問目  (制限時間: ${p.time_limit_sec}秒)`;
+      document.getElementById('question-text').textContent = `${p.question}　【${dir}】`;
+      document.getElementById('turn-info').textContent = isMyTurn
+        ? '👉 あなたの番です！回答してください'
+        : `${p.nickname} さんの番です…`;
+
+      const input = document.getElementById('answer-input');
+      const btn = document.getElementById('answer-btn');
+      input.value = '';
+      input.disabled = !isMyTurn;
+      btn.disabled = !isMyTurn;
+      document.getElementById('result-box').style.display = 'none';
+      if (isMyTurn) input.focus();
+
+      startTimer(p.time_limit_sec);
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:answer_result': {
+      stopTimer();
+      document.getElementById('timer').textContent = '';
+      isMyTurn = false;
+      const p = msg.payload;
+      const box = document.getElementById('result-box');
+      box.innerHTML =
+        `<strong>${p.is_correct ? '✓ 正解!' : '✗ 不正解'}</strong><br>` +
+        `${nick(p.player_id)} の回答: 「${p.answer || '(無回答)'}」<br>` +
+        `正解: ${p.correct_answer}`;
+      box.style.display = 'block';
+      document.getElementById('answer-input').disabled = true;
+      document.getElementById('answer-btn').disabled = true;
+      break;
+    }
+
+    // === 共通の終了 ===
     case 'game:over': {
-      stopTimer(); // round_result を挟まず終了する場合もあるので念のため
+      stopTimer();
       const p = msg.payload;
       showScreen('end-screen');
       document.getElementById('end-title').textContent = 'ゲームオーバー';
       const reasons = {
-        wrong_answer: '多数派が不正解でした',
+        wrong_answer: '不正解でした',
         tie: '同票でした',
         timeout_tie: 'タイムアウト後に同票でした',
+        timeout: '時間切れでした',
       };
+      const who = p.player_id ? `（${nick(p.player_id)}）` : '';
+      const unit = gameMode === 'order' ? '問目' : 'ラウンド';
       document.getElementById('end-detail').textContent =
-        `${reasons[p.reason] || p.reason}（ラウンド ${p.final_round}）`;
+        `${reasons[p.reason] || p.reason}${who}（${p.final_round}${unit}）`;
       break;
     }
 
     case 'game:clear': {
       showScreen('end-screen');
-      document.getElementById('end-title').textContent = '🎉 全ラウンドクリア！';
+      document.getElementById('end-title').textContent = '🎉 全問クリア！';
       document.getElementById('end-detail').textContent =
         `全${msg.payload.total_rounds}問を正解しました！`;
       break;
@@ -310,9 +398,11 @@ document.getElementById('join-confirm-btn').onclick = () => {
 };
 
 document.getElementById('start-btn').onclick = () => {
-  send({ type: 'game:start', payload: {} });
+  const mode = document.getElementById('game-mode').value;
+  send({ type: 'game:start', payload: { game_mode: mode } });
 };
 
+// イノシシパニック：二択投票
 document.getElementById('choice-0').onclick = () => vote(0);
 document.getElementById('choice-1').onclick = () => vote(1);
 
@@ -322,6 +412,23 @@ function vote(index) {
   document.getElementById('choice-0').disabled = true;
   document.getElementById('choice-1').disabled = true;
   send({ type: 'game:vote', payload: { choice_index: index } });
+}
+
+// モジオーダー：テキスト回答
+document.getElementById('answer-btn').onclick = submitAnswer;
+document.getElementById('answer-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitAnswer();
+});
+
+function submitAnswer() {
+  if (!isMyTurn) return;
+  const input = document.getElementById('answer-input');
+  const answer = input.value.trim();
+  if (!answer) return;
+  isMyTurn = false;
+  input.disabled = true;
+  document.getElementById('answer-btn').disabled = true;
+  send({ type: 'game:answer', payload: { answer } });
 }
 </script>
 </body>
