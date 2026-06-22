@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -13,7 +15,20 @@ import (
 // ゲームモードを差し替え可能にするインターフェース。他モードもこれを実装すれば追加できる。
 type GameLogic interface {
 	Start(hub *Hub) error
-	HandleVote(hub *Hub, playerID string, choiceIndex int) error
+	// ゲーム中のクライアントメッセージを処理する。type の解釈は各ゲームに委ねる。
+	HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error
+}
+
+// game_mode 文字列から対応するゲームを生成する。新モードはここに足す。
+func newGame(mode string, qr QuestionRepo) (GameLogic, error) {
+	switch mode {
+	case inoshishiGameMode:
+		return NewInoshishiPanic(qr), nil
+	case orderGameMode:
+		return NewMojiOrder(qr), nil
+	default:
+		return nil, fmt.Errorf("unknown game_mode: %s", mode)
+	}
 }
 
 // 問題取得だけを抽象化（service が repository を直接 import しないため）
@@ -26,6 +41,7 @@ type Client struct {
 	PlayerID string
 	Nickname string
 	IsHost   bool
+	JoinSeq  int // 参加順（ターン制ゲームの順番に使う）
 	Conn     *websocket.Conn
 	ctx      context.Context // 切断で cancel される
 	cancel   context.CancelFunc
@@ -79,6 +95,8 @@ type Hub struct {
 	destroyed    bool // 二重破棄防止
 	mu           sync.Mutex
 	game         GameLogic // 未開始なら nil
+	gameMode     string    // 開始時に確定するゲームモード
+	joinCounter  int       // JoinSeq 採番用カウンタ
 	questionRepo QuestionRepo
 	roomManager  *RoomManager
 	ctx          context.Context // 破棄で cancel される
@@ -108,6 +126,8 @@ func (h *Hub) Register(client *Client, isHost bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	client.IsHost = isHost
+	client.JoinSeq = h.joinCounter // 参加順を採番
+	h.joinCounter++
 	if isHost {
 		h.hostID = client.PlayerID
 	}
@@ -200,6 +220,25 @@ func (h *Hub) PlayerList() []model.PlayerInfo {
 	return h.buildPlayerList()
 }
 
+// 参加順（JoinSeq 昇順）でプレイヤー一覧を返す。ターン制ゲームの進行順に使う。
+func (h *Hub) OrderedPlayers() []model.PlayerInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	clients := h.copyClients()
+	sort.Slice(clients, func(i, j int) bool {
+		return clients[i].JoinSeq < clients[j].JoinSeq
+	})
+	list := make([]model.PlayerInfo, 0, len(clients))
+	for _, c := range clients {
+		list = append(list, model.PlayerInfo{
+			PlayerID: c.PlayerID,
+			Nickname: c.Nickname,
+			IsHost:   c.IsHost,
+		})
+	}
+	return list
+}
+
 func (h *Hub) SetState(state string) {
 	h.mu.Lock()
 	h.state = state
@@ -240,11 +279,25 @@ func (h *Hub) HandleMessage(client *Client, data []byte) {
 	case model.MsgRoomJoin:
 		h.handleRoomJoin(client, msg.Payload)
 	case model.MsgGameStart:
-		h.handleGameStart(client)
-	case model.MsgGameVote:
-		h.handleGameVote(client, msg.Payload)
+		h.handleGameStart(client, msg.Payload)
 	default:
-		h.SendError(client.PlayerID, "unknown message type: "+msg.Type)
+		// それ以外（game:vote / game:answer など）は進行中ゲームへ委譲する
+		h.handleGameMessage(client, msg.Type, msg.Payload)
+	}
+}
+
+// ゲーム固有メッセージをゲームロジックへ委譲する。type の解釈は各ゲームに任せる。
+func (h *Hub) handleGameMessage(client *Client, msgType string, payload json.RawMessage) {
+	h.mu.Lock()
+	game := h.game
+	h.mu.Unlock()
+
+	if game == nil {
+		h.SendError(client.PlayerID, "game has not started")
+		return
+	}
+	if err := game.HandleMessage(h, client.PlayerID, msgType, payload); err != nil {
+		h.SendError(client.PlayerID, err.Error())
 	}
 }
 
@@ -280,8 +333,14 @@ func (h *Hub) handleRoomJoin(client *Client, payload json.RawMessage) {
 	})
 }
 
-// ゲーム開始。ホスト以外・進行中は弾く。
-func (h *Hub) handleGameStart(client *Client) {
+// ゲーム開始。ホスト以外・進行中は弾く。payload の game_mode で進行ロジックを選ぶ。
+func (h *Hub) handleGameStart(client *Client, payload json.RawMessage) {
+	var p model.GameStartPayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.GameMode == "" {
+		h.SendError(client.PlayerID, "invalid game:start payload")
+		return
+	}
+
 	h.mu.Lock()
 	if client.PlayerID != h.hostID {
 		h.mu.Unlock()
@@ -293,8 +352,14 @@ func (h *Hub) handleGameStart(client *Client) {
 		h.SendError(client.PlayerID, "game already in progress")
 		return
 	}
+	game, err := newGame(p.GameMode, h.questionRepo)
+	if err != nil {
+		h.mu.Unlock()
+		h.SendError(client.PlayerID, err.Error())
+		return
+	}
 	h.state = StatePlaying
-	game := NewInoshishiPanic(h.questionRepo)
+	h.gameMode = p.GameMode
 	h.game = game
 	h.mu.Unlock()
 
@@ -305,26 +370,4 @@ func (h *Hub) handleGameStart(client *Client) {
 			h.SetState(StateWaiting)
 		}
 	}()
-}
-
-// 投票。集計はゲームロジックへ委譲する。
-func (h *Hub) handleGameVote(client *Client, payload json.RawMessage) {
-	var p model.GameVotePayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		h.SendError(client.PlayerID, "invalid game:vote payload")
-		return
-	}
-
-	h.mu.Lock()
-	game := h.game
-	h.mu.Unlock()
-
-	if game == nil {
-		h.SendError(client.PlayerID, "game has not started")
-		return
-	}
-
-	if err := game.HandleVote(h, client.PlayerID, p.ChoiceIndex); err != nil {
-		h.SendError(client.PlayerID, err.Error())
-	}
 }
