@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	inoshishiGameMode       = "inoshishi_panic"
+	inoshishiGameMode       = "panic"
 	inoshishiQuestions      = 10 // 出題数
 	inoshishiTimeLimitSec   = 10 // 制限時間
 	inoshishiResultPauseSec = 3  // 結果表示〜次ラウンドの間
@@ -182,8 +182,20 @@ func (g *InoshishiPanic) Start(hub *Hub) error {
 	return nil
 }
 
+// ゲーム中メッセージのうち game:vote を処理する。GameLogic を実装。
+func (g *InoshishiPanic) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
+	if msgType != model.MsgGameVote {
+		return fmt.Errorf("unsupported message type: %s", msgType)
+	}
+	var p model.GameVotePayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return errors.New("invalid game:vote payload")
+	}
+	return g.handleVote(hub, playerID, p.ChoiceIndex)
+}
+
 // 1人分の投票を受け付ける。複数人が同時に投票しても壊れないようロックする。
-func (g *InoshishiPanic) HandleVote(hub *Hub, playerID string, choiceIndex int) error {
+func (g *InoshishiPanic) handleVote(hub *Hub, playerID string, choiceIndex int) error {
 	if choiceIndex != 0 && choiceIndex != 1 {
 		return errors.New("invalid choice_index: must be 0 or 1")
 	}
