@@ -22,6 +22,41 @@
   .server-url { font-size: 0.85rem; color: #666; }
   #vote-status { color: #555; }
   #turn-info { font-size: 1.1rem; font-weight: bold; }
+
+  /* === コトバピース === */
+  /* 上段：問題エリア */
+  #piace-question-area { text-align: center; margin: 12px 0 24px; }
+  #piace-slots { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 16px 0; }
+  .piace-slot {
+    width: 48px; height: 58px; border: 2px solid #333; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.9rem; font-weight: bold; background: #fff; color: #222;
+  }
+  .piace-slot.filled { background: #eef3ff; border-color: #36c; }
+  #piace-explanation {
+    display: none; margin: 12px auto 0; max-width: 480px; text-align: left;
+    background: #fff6f6; border: 1px solid #e2b6b6; border-radius: 8px;
+    padding: 12px 16px; color: #333; line-height: 1.6;
+  }
+  #piace-explanation.show { display: block; }
+  /* 下段：プレイヤーパネル */
+  #piace-panels { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .piace-panel {
+    border: 2px solid #ccc; border-radius: 10px; padding: 10px 8px;
+    width: 110px; text-align: center; background: #fafafa;
+  }
+  .piace-panel.me { border-color: #c00; background: #fff; }
+  .piace-panel .avatar { font-size: 2.2rem; line-height: 1; }
+  .piace-panel .pname { font-weight: bold; font-size: 0.9rem; margin-top: 4px; }
+  .piace-panel .pnum { font-size: 0.75rem; color: #666; margin-bottom: 6px; }
+  .piace-panel input {
+    width: 56px; height: 44px; text-align: center; font-size: 1.5rem;
+    border: 2px solid #aaa; border-radius: 6px; padding: 0; margin: 0;
+  }
+  .piace-panel input:disabled { background: #fff; color: #222; opacity: 1; }
+  .piace-panel input.correct { background: #e23; border-color: #e23; color: #fff; } /* 正解=赤 */
+  .piace-panel input.wrong   { background: #06c; border-color: #06c; color: #fff; } /* 不正解=青 */
+  .piace-panel button { display: block; margin: 6px auto 0; font-size: 0.85rem; padding: 4px 10px; }
 </style>
 </head>
 <body>
@@ -54,6 +89,7 @@
       <select id="game-mode">
         <option value="panic">イノシシパニック（二択投票）</option>
         <option value="order">モジオーダー（順番に回答）</option>
+        <option value="piace">コトバピース（1人1文字）</option>
       </select>
     </span>
     <button id="start-btn" style="display:none">ゲーム開始</button>
@@ -80,6 +116,18 @@
       <button id="answer-btn" disabled>回答</button>
     </div>
 
+    <!-- コトバピース用 -->
+    <div id="piace-area" style="display:none">
+      <!-- 上段：問題エリア（回答スロット＋解説） -->
+      <div id="piace-question-area">
+        <div id="piace-slots"></div>
+        <div id="piace-explanation"></div>
+      </div>
+      <!-- 下段：プレイヤーパネル -->
+      <div id="piace-panels"></div>
+      <p id="piace-progress" style="color:#555;text-align:center;"></p>
+    </div>
+
     <div id="result-box" style="display:none"></div>
   </div>
 
@@ -103,7 +151,11 @@ let hasVoted = false;
 let roomID = null;
 let gameMode = null;           // 'panic' | 'order'（最初のゲームメッセージで確定）
 let isMyTurn = false;          // モジオーダー：今が自分の番か
+let piaceMyPos = -1;           // コトバピース：自分の担当マス位置（未担当は -1）
 let latestPlayers = [];        // player_id → nickname 解決用に最新の一覧を保持
+
+// コトバピース：担当番号ごとのアバター（足りなければ循環）
+const PIACE_AVATARS = ['🦊', '🐰', '🐼', '🐶', '🐱', '🐵', '🐯', '🐨', '🐮', '🐷'];
 // カウントダウン用タイマーID（停止中は null）
 let timerInterval = null;
 
@@ -337,6 +389,119 @@ function handleMessage(msg) {
       break;
     }
 
+    // === コトバピース ===
+    case 'game:piace_round_start': {
+      gameMode = 'piace';
+      document.getElementById('inoshishi-area').style.display = 'none';
+      document.getElementById('order-area').style.display = 'none';
+      document.getElementById('piace-area').style.display = 'block';
+      const p = msg.payload;
+      currentRound = p.round;
+
+      const slots = [...p.slots].sort((a, b) => a.position - b.position);
+
+      // 自分の担当マスを特定
+      const mine = slots.find(s => s.player_id === myPlayerID);
+      piaceMyPos = mine ? mine.position : -1;
+
+      document.getElementById('round-info').textContent =
+        `${p.round} / ${p.total_rounds} 問目  (${p.slot_count}文字 / 制限時間: ${p.time_limit_sec}秒)`;
+      document.getElementById('question-text').textContent = p.question;
+
+      // --- 上段：回答スロット（横一列・初期は空欄）---
+      const slotsEl = document.getElementById('piace-slots');
+      slotsEl.innerHTML = slots
+        .map(s => `<div class="piace-slot" id="piace-slot-${s.position}"></div>`)
+        .join('');
+
+      // 解説エリアをリセット
+      const exp = document.getElementById('piace-explanation');
+      exp.className = '';
+      exp.innerHTML = '';
+
+      // --- 下段：プレイヤーパネル ---
+      const panelsEl = document.getElementById('piace-panels');
+      panelsEl.innerHTML = slots.map(s => {
+        const me = s.player_id === myPlayerID;
+        const avatar = PIACE_AVATARS[s.position % PIACE_AVATARS.length];
+        return `<div class="piace-panel ${me ? 'me' : ''}">
+            <div class="avatar">${avatar}</div>
+            <div class="pname">${s.nickname}${me ? '（あなた）' : ''}</div>
+            <div class="pnum">${s.position + 1}人目</div>
+            <input id="piace-input-${s.position}" maxlength="2" autocomplete="off"
+                   placeholder="字" ${me ? '' : 'disabled'}>
+            ${me ? `<button id="piace-btn-${s.position}">送信</button>` : ''}
+          </div>`;
+      }).join('');
+
+      // 自分の入力枠にイベントを結線
+      if (piaceMyPos >= 0) {
+        const input = document.getElementById(`piace-input-${piaceMyPos}`);
+        document.getElementById(`piace-btn-${piaceMyPos}`).onclick = submitPiace;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPiace(); });
+        input.focus();
+      }
+
+      document.getElementById('piace-progress').textContent = '';
+      document.getElementById('result-box').style.display = 'none';
+
+      startTimer(p.time_limit_sec);
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:piace_progress': {
+      const p = msg.payload;
+      document.getElementById('piace-progress').textContent =
+        `入力済み: ${p.filled_count} / ${p.slot_count} 人`;
+      break;
+    }
+
+    case 'game:piace_round_result': {
+      stopTimer();
+      document.getElementById('timer').textContent = '';
+      const p = msg.payload;
+      const slots = [...p.slots].sort((a, b) => a.position - b.position);
+
+      slots.forEach(s => {
+        // 上段スロットに最終的な文字を表示
+        const slotEl = document.getElementById(`piace-slot-${s.position}`);
+        if (slotEl) {
+          slotEl.textContent = s.char || '';
+          slotEl.classList.add('filled');
+        }
+        // 各パネルの入力枠を塗りつぶし（正解=赤 / 不正解=青、文字は見える）
+        const input = document.getElementById(`piace-input-${s.position}`);
+        if (input) {
+          input.value = s.char || '';
+          input.disabled = true;
+          input.classList.add(s.ok ? 'correct' : 'wrong');
+        }
+        const btn = document.getElementById(`piace-btn-${s.position}`);
+        if (btn) btn.disabled = true;
+      });
+
+      // 不正解なら問題エリアに解説を表示
+      const exp = document.getElementById('piace-explanation');
+      if (p.is_correct) {
+        exp.className = '';
+        exp.innerHTML = '';
+      } else {
+        const wrongs = slots.filter(s => !s.ok).map(s =>
+          `${s.position + 1}文字目 ${s.nickname}：「${s.char || '未入力'}」→ 正解「${s.correct_char}」`
+        ).join('<br>');
+        exp.innerHTML =
+          `<strong>✗ 不正解</strong><br>` +
+          `正解：${p.correct_answer}<br>` +
+          `みんなの組み立て：${p.assembled || '(未完成)'}` +
+          (wrongs ? `<hr style="border:none;border-top:1px solid #e2b6b6;margin:8px 0;">${wrongs}` : '');
+        exp.className = 'show';
+      }
+
+      document.getElementById('piace-progress').textContent = '';
+      break;
+    }
+
     // === 共通の終了 ===
     case 'game:over': {
       stopTimer();
@@ -350,7 +515,7 @@ function handleMessage(msg) {
         timeout: '時間切れでした',
       };
       const who = p.player_id ? `（${nick(p.player_id)}）` : '';
-      const unit = gameMode === 'order' ? '問目' : 'ラウンド';
+      const unit = gameMode === 'panic' ? 'ラウンド' : '問目';
       document.getElementById('end-detail').textContent =
         `${reasons[p.reason] || p.reason}${who}（${p.final_round}${unit}）`;
       break;
@@ -429,6 +594,22 @@ function submitAnswer() {
   input.disabled = true;
   document.getElementById('answer-btn').disabled = true;
   send({ type: 'game:answer', payload: { answer } });
+}
+
+// コトバピース：担当マスの1文字を送信（入力枠はラウンド開始時に動的生成・結線）
+function submitPiace() {
+  if (piaceMyPos < 0) return;
+  const input = document.getElementById(`piace-input-${piaceMyPos}`);
+  const char = input.value.trim();
+  if (!char) return;
+  // 自分の担当スロット（上段）に即時反映
+  const slotEl = document.getElementById(`piace-slot-${piaceMyPos}`);
+  if (slotEl) {
+    slotEl.textContent = char;
+    slotEl.classList.add('filled');
+  }
+  // 送信後も締切までは送り直せる（サーバー側で上書き）
+  send({ type: 'game:piace_submit', payload: { char } });
 }
 </script>
 </body>

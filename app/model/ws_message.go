@@ -9,6 +9,7 @@ const (
 	MsgGameStart  = "game:start"  // ゲーム開始（ホストのみ）
 	MsgGameVote   = "game:vote"   // 投票（イノシシパニック）
 	MsgGameAnswer = "game:answer" // 回答（モジオーダー：現ターンのプレイヤーのみ）
+	MsgGamePiaceSubmit = "game:piace_submit" // 担当マスの1文字を送信（コトバピース）
 
 	// サーバー → クライアント
 	MsgRoomJoined       = "room:joined"         // 入室確認（本人へ）
@@ -19,6 +20,9 @@ const (
 	MsgGameRoundResult  = "game:round_result"   // ラウンド結果（イノシシ）
 	MsgGameTurnStart    = "game:turn_start"     // ターン開始（モジオーダー）
 	MsgGameAnswerResult = "game:answer_result"  // 回答結果（モジオーダー）
+	MsgGamePiaceRoundStart  = "game:piace_round_start"  // ラウンド開始（コトバピース）
+	MsgGamePiaceProgress    = "game:piace_progress"     // 入力進捗（コトバピース）
+	MsgGamePiaceRoundResult = "game:piace_round_result" // ラウンド結果（コトバピース）
 	MsgGameOver         = "game:over"           // ゲームオーバー
 	MsgGameClear        = "game:clear"          // 全クリア
 	MsgError            = "error"               // エラー
@@ -128,6 +132,55 @@ type GameOverPayload struct {
 	Reason     string `json:"reason"`              // wrong_answer / tie / timeout_tie / timeout
 	FinalRound int    `json:"final_round"`
 	PlayerID   string `json:"player_id,omitempty"` // モジオーダーで脱落したプレイヤー
+}
+
+// --- コトバピース（piace） ---
+
+// 担当マスの1文字を送信する。担当 position はサーバー側で固定済みなので char のみ。
+type PiaceSubmitPayload struct {
+	Char string `json:"char"`
+}
+
+// 1マスの担当割り当て。
+type PiaceSlot struct {
+	Position int    `json:"position"`
+	PlayerID string `json:"player_id"`
+	Nickname string `json:"nickname"`
+}
+
+// ラウンド開始。お題・マス数(=人数)・各マスの担当・制限時間を配信する。
+type PiaceRoundStartPayload struct {
+	Round        int         `json:"round"`
+	TotalRounds  int         `json:"total_rounds"`
+	Question     string      `json:"question"`
+	SlotCount    int         `json:"slot_count"` // = 参加人数 n
+	Slots        []PiaceSlot `json:"slots"`
+	TimeLimitSec int         `json:"time_limit_sec"`
+}
+
+// 入力進捗（内容は伏せる）。
+type PiaceProgressPayload struct {
+	FilledCount int `json:"filled_count"`
+	SlotCount   int `json:"slot_count"`
+}
+
+// 1マスの判定結果。正解文字は全マス開示する。
+type PiaceSlotResult struct {
+	Position    int    `json:"position"`
+	PlayerID    string `json:"player_id"`
+	Nickname    string `json:"nickname"`
+	Char        string `json:"char"`         // 入力文字（空なら未入力）
+	CorrectChar string `json:"correct_char"` // 正解文字
+	OK          bool   `json:"ok"`
+}
+
+// ラウンド結果。組み立てた文字列と各マスの正誤を配信する。
+type PiaceRoundResultPayload struct {
+	Round         int               `json:"round"`
+	Assembled     string            `json:"assembled"`
+	CorrectAnswer string            `json:"correct_answer"`
+	IsCorrect     bool              `json:"is_correct"`
+	Slots         []PiaceSlotResult `json:"slots"`
 }
 
 type GameClearPayload struct {
