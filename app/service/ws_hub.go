@@ -28,6 +28,8 @@ func newGame(mode string, qr QuestionRepo) (GameLogic, error) {
 		return NewMojiOrder(qr), nil
 	case piaceGameMode:
 		return NewPiace(qr), nil
+	case bulletGameMode:
+		return NewBullet(qr), nil
 	default:
 		return nil, fmt.Errorf("unknown game_mode: %s", mode)
 	}

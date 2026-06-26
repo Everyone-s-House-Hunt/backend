@@ -10,6 +10,7 @@ const (
 	MsgGameVote   = "game:vote"   // 投票（イノシシパニック）
 	MsgGameAnswer = "game:answer" // 回答（モジオーダー：現ターンのプレイヤーのみ）
 	MsgGamePiaceSubmit = "game:piace_submit" // 担当マスの1文字を送信（コトバピース）
+	MsgGameBulletSubmit = "game:bullet_submit" // 回答を送信（ゾンビバレット：現ターンのプレイヤーのみ）
 
 	// サーバー → クライアント
 	MsgRoomJoined       = "room:joined"         // 入室確認（本人へ）
@@ -23,6 +24,9 @@ const (
 	MsgGamePiaceRoundStart  = "game:piace_round_start"  // ラウンド開始（コトバピース）
 	MsgGamePiaceProgress    = "game:piace_progress"     // 入力進捗（コトバピース）
 	MsgGamePiaceRoundResult = "game:piace_round_result" // ラウンド結果（コトバピース）
+	MsgGameBulletStart  = "game:bullet_start"   // ゲーム開始（ゾンビバレット）
+	MsgGameBulletHit    = "game:bullet_hit"     // 命中＝正解（ゾンビバレット）
+	MsgGameBulletMiss   = "game:bullet_miss"    // ミス＝不正解/重複（ゾンビバレット）
 	MsgGameOver         = "game:over"           // ゲームオーバー
 	MsgGameClear        = "game:clear"          // 全クリア
 	MsgError            = "error"               // エラー
@@ -181,6 +185,47 @@ type PiaceRoundResultPayload struct {
 	CorrectAnswer string            `json:"correct_answer"`
 	IsCorrect     bool              `json:"is_correct"`
 	Slots         []PiaceSlotResult `json:"slots"`
+}
+
+// --- ゾンビバレット（bullet） ---
+
+// 回答を送信する（現ターンのプレイヤーのみ有効）。
+type BulletSubmitPayload struct {
+	Answer string `json:"answer"`
+}
+
+// 固定ループ順の1プレイヤー。
+type BulletPlayer struct {
+	Position int    `json:"position"`
+	PlayerID string `json:"player_id"`
+	Nickname string `json:"nickname"`
+}
+
+// ゲーム開始。お題・目標命中数・制限時間・参加順・先頭ターンを配信する。
+type BulletStartPayload struct {
+	Question        string         `json:"question"`
+	TargetHits      int            `json:"target_hits"`       // = 10
+	TimeLimitSec    int            `json:"time_limit_sec"`    // = 60
+	Players         []BulletPlayer `json:"players"`           // 固定ループ順
+	CurrentPlayerID string         `json:"current_player_id"` // 先頭のターン
+}
+
+// 命中（正解）。命中数・既出一覧・次のターンを配信する。
+type BulletHitPayload struct {
+	PlayerID        string   `json:"player_id"`         // 命中させたプレイヤー
+	Answer          string   `json:"answer"`            // 表示用の正解文字列
+	CorrectCount    int      `json:"correct_count"`
+	TargetHits      int      `json:"target_hits"`
+	CurrentPlayerID string   `json:"current_player_id"` // 次のターン
+	Used            []string `json:"used"`              // 既出の正解一覧
+}
+
+// ミス（不正解 / 重複）。ターンは据え置き（同じプレイヤー）。
+type BulletMissPayload struct {
+	PlayerID        string `json:"player_id"`
+	Answer          string `json:"answer"`
+	Reason          string `json:"reason"`            // "wrong" | "duplicate"
+	CurrentPlayerID string `json:"current_player_id"` // 据え置き
 }
 
 type GameClearPayload struct {
