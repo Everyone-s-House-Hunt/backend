@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"house-hunt/utils"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,8 +23,8 @@ func (h *QuestionHandler) GetQuestions(c *gin.Context) {
 	gameMode := c.Query("game_mode")
 	if gameMode == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "Error",
-			"message": "game_mode is required",
+			"status":  "Error",
+			"message": utils.ErrInvalidInput.Error(),
 		})
 		return
 	}
@@ -33,7 +35,7 @@ func (h *QuestionHandler) GetQuestions(c *gin.Context) {
 	questions, err := h.Service.GetQuestions(gameMode, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "Error",
+			"status":  "Error",
 			"message": err.Error(),
 		})
 		return
@@ -46,8 +48,8 @@ func (h *QuestionHandler) GetQuestions(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "OK",
-		"count": len(questions),
-		"data": responseData,
+		"count":  len(questions),
+		"data":   responseData,
 	})
 }
 
@@ -57,7 +59,7 @@ func (h *QuestionHandler) CreateQuestion(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "Error",
-			"message": "リクエストデータの形式に不備があります",
+			"message": utils.ErrInvalidInput.Error(),
 			"details": err.Error(),
 		})
 		return
@@ -75,7 +77,7 @@ func (h *QuestionHandler) CreateQuestion(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "Error",
-			"message": "問題の登録に失敗しました",
+			"message": utils.ErrDatabase.Error(),
 			"details": err.Error(),
 		})
 		return
@@ -89,29 +91,29 @@ func (h *QuestionHandler) CreateQuestion(c *gin.Context) {
 
 func (h *QuestionHandler) UpdateQuestionStatus(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var req dto.UpdateQuestionStatusRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "Error",
-			"message": "無効なステータス値です。approved, pending, rejected のいずれかを指定してください",
+			"message": utils.ErrInvalidInput.Error(),
 			"details": err.Error(),
 		})
 		return
 	}
 
 	if err := h.Service.UpdateQuestionStatus(id, req); err != nil {
-		if err.Error() == "指定されたIDの問題が見つかりません" {
+		if err == utils.ErrNotFoundID {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status":  "Error",
-				"message": err.Error(),
+				"message": err,
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "Error",
-			"message": "ステータスの更新に失敗しました",
+			"message": err,
 		})
 		return
 	}

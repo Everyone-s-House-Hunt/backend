@@ -3,6 +3,7 @@ package handler
 import (
 	"house-hunt/service"
 	"house-hunt/dto"
+	"house-hunt/utils"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,12 @@ func (h *UserHandler) Register(c *gin.Context) {
 
 	user, err := h.Service.Register(req.Username, req.Email, req.Password)
 	if err != nil {
+		if err == utils.ErrDuplicateEmail {
+			c.JSON(http.StatusConflict, gin.H{
+				"status": "Error",
+				"message": err.Error(),
+			})
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "Error",
 			"message": err.Error(),
@@ -59,17 +66,24 @@ func (h *UserHandler) Login(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "Error",
-			"message": "Invalid request data: " + err.Error(),
+			"message": utils.ErrInvalidInput.Error(),
 		})
 		return
 	}
 
 	accessToken, refreshToken, err := h.Service.Login(req)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "Error",
-			"message": err.Error(),
-		})
+		if err == utils.ErrInvalidCredentials {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status": "Error",
+				"message": utils.ErrInvalidCredentials,
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "Error",
+				"message": utils.ErrInternalServer,
+			})
+		}
 		return
 	}
 
