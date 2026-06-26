@@ -8,6 +8,7 @@ import (
 	"house-hunt/utils"
 
 	"golang.org/x/crypto/bcrypt"
+	"github.com/go-sql-driver/mysql"
 )
 
 type UserService struct {
@@ -36,17 +37,25 @@ func (s *UserService) Register(username, email, password string) (*model.User, e
 	}
 	err = s.Repo.CreateUser(user)
 	if err != nil {
-		return nil, err
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return nil, utils.ErrDuplicateEmail
+		}
+		return nil, utils.ErrDatabase
 	}
 	return user, nil
 }
 
 func (s *UserService) Login(req dto.LoginRequest) (string, string, error) {
-	user, err := s.Repo.FindByEmail(req.Email)
-	if err != nil {
-		return "", "", errors.New("メールアドレスまたはパスワードが間違っています")
-	}
+	var mysqlErr *mysql.MySQLError
 
+	user, err := s.Repo.FindByEmail(req.Email)
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return "", "", utils.ErrUserNotFound
+	} else if err != nil {
+		return "", "", utils.ErrDatabase
+	}
+	
 	if user.PasswordHash == nil || user.Provider != "local" {
 		return "", "", errors.New("このアカウントは外部サービスで登録されています。該当のログイン方法を使用してください")
 	}

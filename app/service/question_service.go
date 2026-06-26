@@ -6,6 +6,8 @@ import (
 	"house-hunt/dto"
 	"house-hunt/utils"
 	"encoding/json"
+
+	"fmt"
 )
 
 type QuestionService struct {
@@ -50,13 +52,22 @@ func (s *QuestionService) CreateQuestion(req dto.CreateQuestionRequest) (*model.
 		Status:        "pending",
 	}
 
-	if err := s.repo.CreateQuestion(question); err != nil {
-		return nil, err
+	err = s.repo.CreateQuestion(question); 
+	if err != nil {
+		fmt.Println(err)
+		return nil, utils.ErrDatabase
 	}
 
 	return question, nil
 }
 
 func (s *QuestionService) UpdateQuestionStatus(id string, req dto.UpdateQuestionStatusRequest) error {
-	return s.repo.UpdateQuestionStatus(id, req.Status)
+	err := s.repo.UpdateQuestionStatus(id, req.Status)
+	if err != nil {
+		if err == utils.ErrNotFoundID {
+			return err
+		}
+		return utils.ErrDatabase
+	}
+	return nil
 }
