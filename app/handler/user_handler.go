@@ -93,3 +93,38 @@ func (h *UserHandler) Login(c *gin.Context) {
 		"refresh_token": refreshToken,
 	})
 }
+
+func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
+	var req dto.GoogleLoginRequest
+
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "Error",
+			"message": utils.ErrInvalidInput,
+		})
+		return
+	}
+
+	accessToken, refreshToken, err := h.Service.LoginWithGoogle(c.Request.Context(), req.IDToken)
+	if err != nil {
+		if err == utils.ErrInvalidCredentials {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status": "Error",
+				"message": utils.ErrInvalidCredentials,
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "Error",
+				"message": utils.ErrInternalServer,
+			})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "OK",
+		"access_token": accessToken,
+		"refresh_token": refreshToken,
+	})
+}
