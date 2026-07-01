@@ -11,6 +11,8 @@ var (
 	ErrUnauthorized       = errors.New("認証に失敗しました。再度ログインしてください")
 	ErrTokenExpired       = errors.New("セッションの有効期限が切れています。再度ログインしてください")
 	ErrInvalidToken       = errors.New("無効な認証トークンです")
+	ErrInvalidGoogleToken  = errors.New("無効なGoogle IDトークンです")
+	ErrProviderConflict     = errors.New("このメールアドレスは別の認証プロバイダで登録されています。該当のログイン方法を使用してください")
 )
 
 // リクエスト・バリデーション関連

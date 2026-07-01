@@ -36,6 +36,7 @@ func SetupRouter(db *gorm.DB) *gin.Engine {
 
 		//ユーザーログインのルーティング
 		r.POST("/login", userhandler.Login)
+		r.POST("/login/google", userhandler.LoginWithGoogle)
 
 		//問題のルーティング
 		questionsGroup := r.Group("/questions")
