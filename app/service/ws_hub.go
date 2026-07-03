@@ -125,10 +125,13 @@ func (h *Hub) Context() context.Context {
 	return h.ctx
 }
 
-// クライアントを登録。最初の登録者をホストにする。
-func (h *Hub) Register(client *Client, isHost bool) {
+// クライアントを登録。取得〜登録の間に破棄されたルームには入れない（false を返す）。
+func (h *Hub) Register(client *Client, isHost bool) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.destroyed {
+		return false
+	}
 	client.IsHost = isHost
 	client.JoinSeq = h.joinCounter // 参加順を採番
 	h.joinCounter++
@@ -136,6 +139,7 @@ func (h *Hub) Register(client *Client, isHost bool) {
 		h.hostID = client.PlayerID
 	}
 	h.clients[client.PlayerID] = client
+	return true
 }
 
 // クライアントを除去しルームを破棄する。
@@ -238,6 +242,7 @@ func (h *Hub) OrderedPlayers() []model.PlayerInfo {
 			PlayerID: c.PlayerID,
 			Nickname: c.Nickname,
 			IsHost:   c.IsHost,
+			JoinSeq:  c.JoinSeq,
 		})
 	}
 	return list
@@ -257,6 +262,7 @@ func (h *Hub) buildPlayerList() []model.PlayerInfo {
 			PlayerID: c.PlayerID,
 			Nickname: c.Nickname,
 			IsHost:   c.IsHost,
+			JoinSeq:  c.JoinSeq,
 		})
 	}
 	return list
