@@ -49,6 +49,7 @@ type PlayerInfo struct {
 	PlayerID string `json:"player_id"`
 	Nickname string `json:"nickname"`
 	IsHost   bool   `json:"is_host"`
+	JoinSeq  int    `json:"join_seq"` // 参加順（フロントの一覧表示・ターン順に使う）
 }
 
 // --- 各メッセージの payload ---
