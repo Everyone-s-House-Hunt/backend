@@ -5,9 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'app/**'
-      - 'docker-compose.prod.yml'
-      - 'nginx/**'
+      - 'backend/**'
 
 jobs:
   deploy:
@@ -16,14 +14,14 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Copy Files to EC2 via SCP
+      - name: Copy Backend Files to EC2 via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "."
-          target: "~/house-hunt/backend"
+          source: "backend/"
+          target: "~/house-hunt/"
           overwrite: true
 
       - name: Execute Docker Compose on EC2
@@ -34,5 +32,12 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/house-hunt/backend
-            docker compose -f docker-compose.prod.yml up -d --build
+            
+            if [ -f "docker-compose.prod.yml" ]; then
+              docker compose -f docker-compose.prod.yml up -d --build
+            else
+              echo "Error: docker-compose.prod.yml not found in ~/house-hunt/backend"
+              exit 1
+            fi
+
             docker image prune -f
