@@ -21,8 +21,8 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "backend/"
-          target: "~/house-hunt/"
+          source: "."
+          target: "/home/ubuntu/house-hunt/backend"
           overwrite: true
 
       - name: Execute Docker Compose on EC2
@@ -32,13 +32,13 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd ~/house-hunt/backend
+            cd /home/ubuntu/house-hunt/backend
             
             if [ -f "docker-compose.prod.yml" ]; then
               docker compose -f docker-compose.prod.yml up -d --build
             else
-              echo "Error: docker-compose.prod.yml not found in ~/house-hunt/backend"
+              echo "Error: docker-compose.prod.yml not found"
               exit 1
             fi
-
+            
             docker image prune -f
