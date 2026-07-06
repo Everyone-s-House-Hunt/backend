@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>WebSocket Test — マルチゲーム</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 20px auto; padding: 0 16px; }
+  h2 { margin-top: 0; }
+  input, button, select { font-size: 1rem; padding: 6px 10px; margin: 4px 2px; }
+  button { cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #screen > div { display: none; }
+  #screen > div.active { display: block; }
+  #players { list-style: none; padding: 0; }
+  #players li { padding: 4px 0; }
+  .choice-btn { font-size: 1.2rem; padding: 12px 24px; margin: 8px; }
+  .choice-btn:disabled { background: #ccc; }
+  #answer-input { font-size: 1.3rem; width: 60%; }
+  #result-box { border: 2px solid #333; padding: 12px; margin: 10px 0; border-radius: 6px; }
+  #log-area { background: #111; color: #0f0; font-family: monospace; font-size: 0.8rem;
+               padding: 8px; height: 180px; overflow-y: auto; margin-top: 20px; border-radius: 4px; }
+  .server-url { font-size: 0.85rem; color: #666; }
+  #vote-status { color: #555; }
+  #turn-info { font-size: 1.1rem; font-weight: bold; }
+
+  /* === コトバピース === */
+  /* 上段：問題エリア */
+  #piace-question-area { text-align: center; margin: 12px 0 24px; }
+  #piace-slots { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 16px 0; }
+  .piace-slot {
+    width: 48px; height: 58px; border: 2px solid #333; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.9rem; font-weight: bold; background: #fff; color: #222;
+  }
+  .piace-slot.filled { background: #eef3ff; border-color: #36c; }
+  #piace-explanation {
+    display: none; margin: 12px auto 0; max-width: 480px; text-align: left;
+    background: #fff6f6; border: 1px solid #e2b6b6; border-radius: 8px;
+    padding: 12px 16px; color: #333; line-height: 1.6;
+  }
+  #piace-explanation.show { display: block; }
+  /* 下段：プレイヤーパネル */
+  #piace-panels { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .piace-panel {
+    border: 2px solid #ccc; border-radius: 10px; padding: 10px 8px;
+    width: 110px; text-align: center; background: #fafafa;
+  }
+  .piace-panel.me { border-color: #c00; background: #fff; }
+  .piace-panel .avatar { font-size: 2.2rem; line-height: 1; }
+  .piace-panel .pname { font-weight: bold; font-size: 0.9rem; margin-top: 4px; }
+  .piace-panel .pnum { font-size: 0.75rem; color: #666; margin-bottom: 6px; }
+  .piace-panel input {
+    width: 56px; height: 44px; text-align: center; font-size: 1.5rem;
+    border: 2px solid #aaa; border-radius: 6px; padding: 0; margin: 0;
+  }
+  .piace-panel input:disabled { background: #fff; color: #222; opacity: 1; }
+  .piace-panel input.correct { background: #e23; border-color: #e23; color: #fff; } /* 正解=赤 */
+  .piace-panel input.wrong   { background: #06c; border-color: #06c; color: #fff; } /* 不正解=青 */
+  .piace-panel button { display: block; margin: 6px auto 0; font-size: 0.85rem; padding: 4px 10px; }
+
+  /* === ゾンビバレット === */
+  #bullet-area { text-align: center; }
+  #bullet-zombie-wrap {
+    position: relative; height: 72px; margin: 10px 0; overflow: hidden;
+    background: linear-gradient(90deg, #d7efd7 0%, #f6dada 100%);
+    border: 2px solid #333; border-radius: 8px;
+  }
+  #bullet-zombie-wrap::before { content: '🔫'; position: absolute; left: 6px; top: 16px; font-size: 2rem; }
+  #bullet-zombie { position: absolute; top: 10px; left: 88%; font-size: 2.8rem; transition: left .12s linear; }
+  #bullet-hits { font-weight: bold; font-size: 1.1rem; }
+  #bullet-input { font-size: 1.3rem; width: 50%; }
+  .bullet-chip {
+    display: inline-block; background: #eef; border: 1px solid #99c; border-radius: 10px;
+    padding: 1px 8px; margin: 2px; font-size: 0.85rem;
+  }
+  #bullet-used { margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h2>テストクライアント</h2>
+<p class="server-url">
+  サーバー: <input id="server-url" value="ws://localhost:8080" size="30">
+</p>
+
+<div id="screen">
+
+  <!-- ログイン画面 -->
+  <div id="login-screen" class="active">
+    <p>ニックネーム: <input id="nickname" placeholder="たろう" size="16"></p>
+    <button id="create-btn">ルーム作成</button>
+    <button id="join-btn">ルームに参加</button>
+    <span id="room-id-input" style="display:none">
+      ルームID: <input id="join-room-id" placeholder="A3KF9X" size="8" maxlength="6">
+      <button id="join-confirm-btn">接続</button>
+    </span>
+  </div>
+
+  <!-- ロビー画面 -->
+  <div id="lobby-screen">
+    <h3>ロビー — ルームID: <span id="lobby-room-id"></span></h3>
+    <p>プレイヤー一覧:</p>
+    <ul id="players"></ul>
+    <span id="mode-select" style="display:none">
+      ゲーム:
+      <select id="game-mode">
+        <option value="panic">イノシシパニック（二択投票）</option>
+        <option value="order">モジオーダー（順番に回答）</option>
+        <option value="piace">コトバピース（1人1文字）</option>
+        <option value="bullet">ゾンビバレット（複数解答リレー）</option>
+      </select>
+    </span>
+    <button id="start-btn" style="display:none">ゲーム開始</button>
+    <p id="waiting-msg" style="color:#888">ホストがゲームを開始するのを待っています...</p>
+  </div>
+
+  <!-- ゲーム画面 -->
+  <div id="game-screen">
+    <p id="round-info"></p>
+    <p id="timer" style="font-size:1.4rem;font-weight:bold;"></p>
+    <h3 id="question-text"></h3>
+
+    <!-- イノシシパニック用 -->
+    <div id="inoshishi-area">
+      <button class="choice-btn" id="choice-0"></button>
+      <button class="choice-btn" id="choice-1"></button>
+      <p id="vote-status"></p>
+    </div>
+
+    <!-- モジオーダー用 -->
+    <div id="order-area" style="display:none">
+      <p id="turn-info"></p>
+      <input id="answer-input" placeholder="答えを入力" autocomplete="off" disabled>
+      <button id="answer-btn" disabled>回答</button>
+    </div>
+
+    <!-- コトバピース用 -->
+    <div id="piace-area" style="display:none">
+      <!-- 上段：問題エリア（回答スロット＋解説） -->
+      <div id="piace-question-area">
+        <div id="piace-slots"></div>
+        <div id="piace-explanation"></div>
+      </div>
+      <!-- 下段：プレイヤーパネル -->
+      <div id="piace-panels"></div>
+      <p id="piace-progress" style="color:#555;text-align:center;"></p>
+    </div>
+
+    <!-- ゾンビバレット用 -->
+    <div id="bullet-area" style="display:none">
+      <div id="bullet-zombie-wrap"><div id="bullet-zombie">🧟</div></div>
+      <p id="bullet-hits"></p>
+      <p id="bullet-turn" style="font-weight:bold;"></p>
+      <input id="bullet-input" placeholder="答えを入力" autocomplete="off" disabled>
+      <button id="bullet-btn" disabled>撃つ</button>
+      <p id="bullet-msg" style="min-height:1.3em;"></p>
+      <div id="bullet-used"></div>
+    </div>
+
+    <div id="result-box" style="display:none"></div>
+  </div>
+
+  <!-- 終了画面 -->
+  <div id="end-screen">
+    <h3 id="end-title"></h3>
+    <p id="end-detail"></p>
+    <button onclick="location.reload()">タイトルに戻る</button>
+  </div>
+
+</div>
+
+<div id="log-area"></div>
+
+<script>
+let ws = null;
+let myPlayerID = null;
+let isHost = false;
+let currentRound = 0;
+let hasVoted = false;
+let roomID = null;
+let gameMode = null;           // 'panic' | 'order'（最初のゲームメッセージで確定）
+let isMyTurn = false;          // モジオーダー：今が自分の番か
+let piaceMyPos = -1;           // コトバピース：自分の担当マス位置（未担当は -1）
+let latestPlayers = [];        // player_id → nickname 解決用に最新の一覧を保持
+
+// コトバピース：担当番号ごとのアバター（足りなければ循環）
+const PIACE_AVATARS = ['🦊', '🐰', '🐼', '🐶', '🐱', '🐵', '🐯', '🐨', '🐮', '🐷'];
+// カウントダウン用タイマーID（停止中は null）
+let timerInterval = null;
+
+// ゾンビバレット用
+let bulletStartMs = 0;     // game:bullet_start を受信した時刻（ゾンビ前進の基準）
+let bulletTimeLimit = 60;
+let bulletTarget = 10;
+let bulletHits = 0;
+let bulletAnim = null;     // ゾンビ前進アニメの interval ID
+
+// player_id からニックネームを引く（不明なら短縮ID）
+function nick(id) {
+  const p = latestPlayers.find(x => x.player_id === id);
+  return p ? (p.nickname || '(未入室)') : id.slice(0, 6);
+}
+
+// 制限時間のカウントダウン開始。seconds はサーバーから来る制限時間。
+function startTimer(seconds) {
+  stopTimer(); // 前ラウンドのタイマーが残らないよう先に止める
+  let remaining = seconds;
+  const el = document.getElementById('timer');
+  const render = () => {
+    el.textContent = `残り ${remaining} 秒`;
+    el.style.color = remaining <= 5 ? '#c00' : '#333'; // 残り5秒以下は赤
+  };
+  render();
+  // 1秒ごとに減らして再描画
+  timerInterval = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      remaining = 0;
+      render();
+      stopTimer();
+      return;
+    }
+    render();
+  }, 1000);
+}
+
+// カウントダウンを止める
+function stopTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+}
+
+function log(msg) {
+  const el = document.getElementById('log-area');
+  const t = new Date().toLocaleTimeString();
+  el.textContent += `[${t}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function showScreen(id) {
+  document.querySelectorAll('#screen > div').forEach(d => d.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function generateRoomID() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+
+function connect(rid) {
+  const nickname = document.getElementById('nickname').value.trim();
+  if (!nickname) { alert('ニックネームを入力してください'); return; }
+
+  const base = document.getElementById('server-url').value.trim();
+  roomID = rid;
+  const url = `${base}/ws/rooms/${roomID}`;
+  log(`接続中: ${url}`);
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    log('WebSocket接続完了');
+    send({ type: 'room:join', payload: { nickname } });
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { log('parse error: ' + e.data); return; }
+    log(`受信: ${JSON.stringify(msg)}`);
+    handleMessage(msg);
+  };
+
+  ws.onclose = (e) => {
+    log(`切断 code=${e.code} reason=${e.reason}`);
+  };
+
+  ws.onerror = (e) => {
+    log('WebSocketエラー');
+  };
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const json = JSON.stringify(obj);
+    log(`送信: ${json}`);
+    ws.send(json);
+  }
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+
+    case 'room:joined': {
+      myPlayerID = msg.payload.player_id;
+      isHost = msg.payload.is_host;
+      latestPlayers = msg.payload.players;
+      document.getElementById('lobby-room-id').textContent = roomID;
+      renderPlayers(msg.payload.players);
+      if (isHost) {
+        document.getElementById('start-btn').style.display = 'inline';
+        document.getElementById('mode-select').style.display = 'inline';
+        document.getElementById('waiting-msg').style.display = 'none';
+      }
+      showScreen('lobby-screen');
+      break;
+    }
+
+    case 'room:player_joined': {
+      latestPlayers = msg.payload.players;
+      renderPlayers(msg.payload.players);
+      break;
+    }
+
+    case 'room:destroyed': {
+      stopTimer();
+      log(`ルーム破棄: ${msg.payload.reason}`);
+      showScreen('end-screen');
+      document.getElementById('end-title').textContent = 'ルームが解散されました';
+      document.getElementById('end-detail').textContent =
+        `プレイヤーが切断しました (${msg.payload.disconnected_player_id})`;
+      if (ws) ws.close();
+      break;
+    }
+
+    // === イノシシパニック ===
+    case 'game:round_start': {
+      gameMode = 'panic';
+      document.getElementById('inoshishi-area').style.display = 'block';
+      document.getElementById('order-area').style.display = 'none';
+      const p = msg.payload;
+      currentRound = p.round;
+      hasVoted = false;
+      document.getElementById('round-info').textContent =
+        `ラウンド ${p.round} / ${p.total_rounds}  (制限時間: ${p.time_limit_sec}秒)`;
+      document.getElementById('question-text').textContent = p.question;
+      document.getElementById('choice-0').textContent = `A: ${p.choices[0]}`;
+      document.getElementById('choice-1').textContent = `B: ${p.choices[1]}`;
+      document.getElementById('choice-0').disabled = false;
+      document.getElementById('choice-1').disabled = false;
+      document.getElementById('vote-status').textContent = '';
+      document.getElementById('result-box').style.display = 'none';
+      startTimer(p.time_limit_sec); // カウントダウン開始
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:vote_received': {
+      const p = msg.payload;
+      document.getElementById('vote-status').textContent =
+        `投票済み: ${p.voted_count} / ${p.total_count} 人`;
+      break;
+    }
+
+    case 'game:round_result': {
+      stopTimer(); // 判定が出たのでカウントダウン停止
+      document.getElementById('timer').textContent = '';
+      const p = msg.payload;
+      const box = document.getElementById('result-box');
+      const choiceLabels = ['A', 'B'];
+      const correct = choiceLabels[p.correct_index];
+      let html = `<strong>結果: ${p.result === 'correct' ? '✓ 正解!' : p.result === 'wrong' ? '✗ 不正解' : '引き分け'}</strong><br>`;
+      html += `正解: ${correct}<br>`;
+      for (let i = 0; i <= 1; i++) {
+        const voters = (p.votes[String(i)] || []).length;
+        html += `${choiceLabels[i]}: ${voters}票  `;
+      }
+      if (p.no_vote && p.no_vote.length > 0) html += `<br>棄権: ${p.no_vote.length}人`;
+      box.innerHTML = html;
+      box.style.display = 'block';
+      document.getElementById('choice-0').disabled = true;
+      document.getElementById('choice-1').disabled = true;
+      break;
+    }
+
+    // === モジオーダー ===
+    case 'game:turn_start': {
+      gameMode = 'order';
+      document.getElementById('inoshishi-area').style.display = 'none';
+      document.getElementById('order-area').style.display = 'block';
+      const p = msg.payload;
+      currentRound = p.round;
+      isMyTurn = (p.current_player_id === myPlayerID);
+
+      const dir = p.direction === 'reading_to_kanji'
+        ? '読み → 漢字に直してください'
+        : '漢字 → 読み（ひらがな）を答えてください';
+
+      document.getElementById('round-info').textContent =
+        `${p.round} / ${p.total_rounds} 問目  (制限時間: ${p.time_limit_sec}秒)`;
+      document.getElementById('question-text').textContent = `${p.question}　【${dir}】`;
+      document.getElementById('turn-info').textContent = isMyTurn
+        ? '👉 あなたの番です！回答してください'
+        : `${p.nickname} さんの番です…`;
+
+      const input = document.getElementById('answer-input');
+      const btn = document.getElementById('answer-btn');
+      input.value = '';
+      input.disabled = !isMyTurn;
+      btn.disabled = !isMyTurn;
+      document.getElementById('result-box').style.display = 'none';
+      if (isMyTurn) input.focus();
+
+      startTimer(p.time_limit_sec);
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:answer_result': {
+      stopTimer();
+      document.getElementById('timer').textContent = '';
+      isMyTurn = false;
+      const p = msg.payload;
+      const box = document.getElementById('result-box');
+      box.innerHTML =
+        `<strong>${p.is_correct ? '✓ 正解!' : '✗ 不正解'}</strong><br>` +
+        `${nick(p.player_id)} の回答: 「${p.answer || '(無回答)'}」<br>` +
+        `正解: ${p.correct_answer}`;
+      box.style.display = 'block';
+      document.getElementById('answer-input').disabled = true;
+      document.getElementById('answer-btn').disabled = true;
+      break;
+    }
+
+    // === コトバピース ===
+    case 'game:piace_round_start': {
+      gameMode = 'piace';
+      document.getElementById('inoshishi-area').style.display = 'none';
+      document.getElementById('order-area').style.display = 'none';
+      document.getElementById('piace-area').style.display = 'block';
+      const p = msg.payload;
+      currentRound = p.round;
+
+      const slots = [...p.slots].sort((a, b) => a.position - b.position);
+
+      // 自分の担当マスを特定
+      const mine = slots.find(s => s.player_id === myPlayerID);
+      piaceMyPos = mine ? mine.position : -1;
+
+      document.getElementById('round-info').textContent =
+        `${p.round} / ${p.total_rounds} 問目  (${p.slot_count}文字 / 制限時間: ${p.time_limit_sec}秒)`;
+      document.getElementById('question-text').textContent = p.question;
+
+      // --- 上段：回答スロット（横一列・初期は空欄）---
+      const slotsEl = document.getElementById('piace-slots');
+      slotsEl.innerHTML = slots
+        .map(s => `<div class="piace-slot" id="piace-slot-${s.position}"></div>`)
+        .join('');
+
+      // 解説エリアをリセット
+      const exp = document.getElementById('piace-explanation');
+      exp.className = '';
+      exp.innerHTML = '';
+
+      // --- 下段：プレイヤーパネル ---
+      const panelsEl = document.getElementById('piace-panels');
+      panelsEl.innerHTML = slots.map(s => {
+        const me = s.player_id === myPlayerID;
+        const avatar = PIACE_AVATARS[s.position % PIACE_AVATARS.length];
+        return `<div class="piace-panel ${me ? 'me' : ''}">
+            <div class="avatar">${avatar}</div>
+            <div class="pname">${s.nickname}${me ? '（あなた）' : ''}</div>
+            <div class="pnum">${s.position + 1}人目</div>
+            <input id="piace-input-${s.position}" maxlength="2" autocomplete="off"
+                   placeholder="字" ${me ? '' : 'disabled'}>
+            ${me ? `<button id="piace-btn-${s.position}">送信</button>` : ''}
+          </div>`;
+      }).join('');
+
+      // 自分の入力枠にイベントを結線
+      if (piaceMyPos >= 0) {
+        const input = document.getElementById(`piace-input-${piaceMyPos}`);
+        document.getElementById(`piace-btn-${piaceMyPos}`).onclick = submitPiace;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPiace(); });
+        input.focus();
+      }
+
+      document.getElementById('piace-progress').textContent = '';
+      document.getElementById('result-box').style.display = 'none';
+
+      startTimer(p.time_limit_sec);
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:piace_progress': {
+      const p = msg.payload;
+      document.getElementById('piace-progress').textContent =
+        `入力済み: ${p.filled_count} / ${p.slot_count} 人`;
+      break;
+    }
+
+    case 'game:piace_round_result': {
+      stopTimer();
+      document.getElementById('timer').textContent = '';
+      const p = msg.payload;
+      const slots = [...p.slots].sort((a, b) => a.position - b.position);
+
+      slots.forEach(s => {
+        // 上段スロットに最終的な文字を表示
+        const slotEl = document.getElementById(`piace-slot-${s.position}`);
+        if (slotEl) {
+          slotEl.textContent = s.char || '';
+          slotEl.classList.add('filled');
+        }
+        // 各パネルの入力枠を塗りつぶし（正解=赤 / 不正解=青、文字は見える）
+        const input = document.getElementById(`piace-input-${s.position}`);
+        if (input) {
+          input.value = s.char || '';
+          input.disabled = true;
+          input.classList.add(s.ok ? 'correct' : 'wrong');
+        }
+        const btn = document.getElementById(`piace-btn-${s.position}`);
+        if (btn) btn.disabled = true;
+      });
+
+      // 不正解なら問題エリアに解説を表示
+      const exp = document.getElementById('piace-explanation');
+      if (p.is_correct) {
+        exp.className = '';
+        exp.innerHTML = '';
+      } else {
+        const wrongs = slots.filter(s => !s.ok).map(s =>
+          `${s.position + 1}文字目 ${s.nickname}：「${s.char || '未入力'}」→ 正解「${s.correct_char}」`
+        ).join('<br>');
+        exp.innerHTML =
+          `<strong>✗ 不正解</strong><br>` +
+          `正解：${p.correct_answer}<br>` +
+          `みんなの組み立て：${p.assembled || '(未完成)'}` +
+          (wrongs ? `<hr style="border:none;border-top:1px solid #e2b6b6;margin:8px 0;">${wrongs}` : '');
+        exp.className = 'show';
+      }
+
+      document.getElementById('piace-progress').textContent = '';
+      break;
+    }
+
+    // === ゾンビバレット ===
+    case 'game:bullet_start': {
+      gameMode = 'bullet';
+      document.getElementById('inoshishi-area').style.display = 'none';
+      document.getElementById('order-area').style.display = 'none';
+      document.getElementById('piace-area').style.display = 'none';
+      document.getElementById('bullet-area').style.display = 'block';
+      const p = msg.payload;
+      bulletTimeLimit = p.time_limit_sec;
+      bulletTarget = p.target_hits;
+      bulletHits = 0;
+      bulletStartMs = Date.now();
+
+      document.getElementById('round-info').textContent =
+        `🧟 ゾンビ出現！ ${p.target_hits}発で撃破（制限 ${p.time_limit_sec}秒）`;
+      document.getElementById('question-text').textContent = p.question;
+      updateBulletHits(0);
+      setBulletTurn(p.current_player_id);
+      document.getElementById('bullet-msg').textContent = '';
+      document.getElementById('bullet-used').innerHTML = '';
+      document.getElementById('result-box').style.display = 'none';
+
+      startTimer(p.time_limit_sec);
+      startBulletAnim();
+      showScreen('game-screen');
+      break;
+    }
+
+    case 'game:bullet_hit': {
+      const p = msg.payload;
+      bulletHits = p.correct_count;
+      updateBulletHits(p.correct_count);
+      document.getElementById('bullet-used').innerHTML =
+        '既出: ' + p.used.map(u => `<span class="bullet-chip">${u}</span>`).join(' ');
+      document.getElementById('bullet-msg').innerHTML =
+        `<span style="color:#080">🎯 ${nick(p.player_id)}「${p.answer}」命中！ (${p.correct_count}/${p.target_hits})</span>`;
+      setBulletTurn(p.current_player_id);
+      break;
+    }
+
+    case 'game:bullet_miss': {
+      const p = msg.payload;
+      const r = p.reason === 'duplicate' ? '重複' : '不正解';
+      document.getElementById('bullet-msg').innerHTML =
+        `<span style="color:#c00">💥 ${nick(p.player_id)}「${p.answer}」${r}！ 同じ人がもう一度</span>`;
+      setBulletTurn(p.current_player_id); // ターン据え置き
+      break;
+    }
+
+    // === 共通の終了 ===
+    case 'game:over': {
+      stopTimer();
+      stopBulletAnim();
+      const p = msg.payload;
+      showScreen('end-screen');
+      document.getElementById('end-title').textContent = 'ゲームオーバー';
+      if (gameMode === 'bullet') {
+        document.getElementById('end-detail').textContent =
+          `🧟 ゾンビに到達された…（命中 ${p.final_round} / ${bulletTarget}）`;
+      } else {
+        const reasons = {
+          wrong_answer: '不正解でした',
+          tie: '同票でした',
+          timeout_tie: 'タイムアウト後に同票でした',
+          timeout: '時間切れでした',
+        };
+        const who = p.player_id ? `（${nick(p.player_id)}）` : '';
+        const unit = gameMode === 'panic' ? 'ラウンド' : '問目';
+        document.getElementById('end-detail').textContent =
+          `${reasons[p.reason] || p.reason}${who}（${p.final_round}${unit}）`;
+      }
+      break;
+    }
+
+    case 'game:clear': {
+      stopBulletAnim();
+      showScreen('end-screen');
+      if (gameMode === 'bullet') {
+        document.getElementById('end-title').textContent = '🎉 ゾンビ撃破！';
+        document.getElementById('end-detail').textContent =
+          `${msg.payload.total_rounds}発命中で撃破成功！`;
+      } else {
+        document.getElementById('end-title').textContent = '🎉 全問クリア！';
+        document.getElementById('end-detail').textContent =
+          `全${msg.payload.total_rounds}問を正解しました！`;
+      }
+      break;
+    }
+
+    case 'error': {
+      log(`サーバーエラー: ${msg.payload.message}`);
+      alert(`エラー: ${msg.payload.message}`);
+      break;
+    }
+  }
+}
+
+function renderPlayers(players) {
+  const ul = document.getElementById('players');
+  ul.innerHTML = '';
+  players.forEach(p => {
+    const li = document.createElement('li');
+    li.textContent = `${p.nickname || '(未入室)'}${p.is_host ? ' 👑' : ''}${p.player_id === myPlayerID ? ' (あなた)' : ''}`;
+    ul.appendChild(li);
+  });
+}
+
+document.getElementById('create-btn').onclick = () => {
+  connect(generateRoomID());
+};
+
+document.getElementById('join-btn').onclick = () => {
+  const span = document.getElementById('room-id-input');
+  span.style.display = span.style.display === 'none' ? 'inline' : 'none';
+};
+
+document.getElementById('join-confirm-btn').onclick = () => {
+  const rid = document.getElementById('join-room-id').value.trim().toUpperCase();
+  if (rid.length !== 6) { alert('ルームIDは6文字です'); return; }
+  connect(rid);
+};
+
+document.getElementById('start-btn').onclick = () => {
+  const mode = document.getElementById('game-mode').value;
+  send({ type: 'game:start', payload: { game_mode: mode } });
+};
+
+// イノシシパニック：二択投票
+document.getElementById('choice-0').onclick = () => vote(0);
+document.getElementById('choice-1').onclick = () => vote(1);
+
+function vote(index) {
+  if (hasVoted) return;
+  hasVoted = true;
+  document.getElementById('choice-0').disabled = true;
+  document.getElementById('choice-1').disabled = true;
+  send({ type: 'game:vote', payload: { choice_index: index } });
+}
+
+// モジオーダー：テキスト回答
+document.getElementById('answer-btn').onclick = submitAnswer;
+document.getElementById('answer-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitAnswer();
+});
+
+function submitAnswer() {
+  if (!isMyTurn) return;
+  const input = document.getElementById('answer-input');
+  const answer = input.value.trim();
+  if (!answer) return;
+  isMyTurn = false;
+  input.disabled = true;
+  document.getElementById('answer-btn').disabled = true;
+  send({ type: 'game:answer', payload: { answer } });
+}
+
+// コトバピース：担当マスの1文字を送信（入力枠はラウンド開始時に動的生成・結線）
+function submitPiace() {
+  if (piaceMyPos < 0) return;
+  const input = document.getElementById(`piace-input-${piaceMyPos}`);
+  const char = input.value.trim();
+  if (!char) return;
+  // 自分の担当スロット（上段）に即時反映
+  const slotEl = document.getElementById(`piace-slot-${piaceMyPos}`);
+  if (slotEl) {
+    slotEl.textContent = char;
+    slotEl.classList.add('filled');
+  }
+  // 送信後も締切までは送り直せる（サーバー側で上書き）
+  send({ type: 'game:piace_submit', payload: { char } });
+}
+
+// ゾンビバレット：回答を送信
+document.getElementById('bullet-btn').onclick = submitBullet;
+document.getElementById('bullet-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitBullet();
+});
+
+function submitBullet() {
+  const input = document.getElementById('bullet-input');
+  const answer = input.value.trim();
+  if (!answer) return;
+  // 不正解なら同じプレイヤーが続行するので入力は閉じない。ターン移行は setBulletTurn が制御。
+  send({ type: 'game:bullet_submit', payload: { answer } });
+  input.value = '';
+  input.focus();
+}
+
+// 命中数ゲージ（残弾＝ゾンビHP）を更新
+function updateBulletHits(hits) {
+  document.getElementById('bullet-hits').textContent =
+    `命中 ${hits} / ${bulletTarget}　残りHP: ${bulletTarget - hits}`;
+}
+
+// 現ターンの表示と自分の入力可否を切り替える
+function setBulletTurn(currentId) {
+  const mine = currentId === myPlayerID;
+  document.getElementById('bullet-turn').textContent = mine
+    ? '👉 あなたの番です！答えを撃て'
+    : `${nick(currentId)} さんの番…`;
+  const input = document.getElementById('bullet-input');
+  const btn = document.getElementById('bullet-btn');
+  input.disabled = !mine;
+  btn.disabled = !mine;
+  if (mine) input.focus();
+}
+
+// ゾンビ前進アニメ（クライアント自前計算）:
+//   位置 = max(0, 経過/制限*100 - 命中数*10)。0=奥, 100=到達。
+function startBulletAnim() {
+  stopBulletAnim();
+  const z = document.getElementById('bullet-zombie');
+  bulletAnim = setInterval(() => {
+    const elapsed = (Date.now() - bulletStartMs) / 1000;
+    let pos = elapsed / bulletTimeLimit * 100 - bulletHits * 10;
+    pos = Math.max(0, Math.min(100, pos));
+    z.style.left = `${(100 - pos) * 0.88}%`; // pos0→88%(奥) … pos100→0%(手前)
+  }, 100);
+}
+
+function stopBulletAnim() {
+  if (bulletAnim) {
+    clearInterval(bulletAnim);
+    bulletAnim = null;
+  }
+}
+</script>
+</body>
+</html>
