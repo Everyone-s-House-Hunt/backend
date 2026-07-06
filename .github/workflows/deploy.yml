@@ -1,12 +1,13 @@
-name: Deploy to EC2
+name: Deploy Backend to EC2
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'backend/**'
-      - '.github/workflow/deploy.yml'
+      - 'app/**'
+      - 'docker-compose.prod.yml'
+      - 'nginx/**'
 
 jobs:
   deploy:
@@ -22,7 +23,7 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           source: "."
-          target: "~/house-hunt"
+          target: "~/house-hunt/backend"
           overwrite: true
 
       - name: Execute Docker Compose on EC2
@@ -32,5 +33,6 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd ~/house-hunt
-            docker compose up -d --build
+            cd ~/house-hunt/backend
+            docker compose -f docker-compose.prod.yml up -d --build
+            docker image prune -f
