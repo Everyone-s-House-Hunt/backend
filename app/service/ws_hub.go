@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -90,6 +91,9 @@ const (
 	StateFinished = "finished"
 )
 
+// 1ルームの最大人数（ホスト含む）
+const maxRoomPlayers = 5
+
 // 1ルーム内の全クライアントを管理する
 type Hub struct {
 	RoomID       string
@@ -125,12 +129,18 @@ func (h *Hub) Context() context.Context {
 	return h.ctx
 }
 
-// クライアントを登録。取得〜登録の間に破棄されたルームには入れない（false を返す）。
-func (h *Hub) Register(client *Client, isHost bool) bool {
+// クライアントを登録。破棄済み・ゲーム進行中のルームには入れない（拒否理由を error で返す）。
+func (h *Hub) Register(client *Client, isHost bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.destroyed {
-		return false
+	if h.destroyed { // 取得〜登録の間に破棄された
+		return errors.New("room not found")
+	}
+	if h.state != StateWaiting { // 途中参加は不可（作成者は新規ルームなので常に waiting）
+		return errors.New("game already in progress")
+	}
+	if len(h.clients) >= maxRoomPlayers { // 満室（入室処理前の接続も枠として数える）
+		return errors.New("room is full")
 	}
 	client.IsHost = isHost
 	client.JoinSeq = h.joinCounter // 参加順を採番
@@ -139,7 +149,7 @@ func (h *Hub) Register(client *Client, isHost bool) bool {
 		h.hostID = client.PlayerID
 	}
 	h.clients[client.PlayerID] = client
-	return true
+	return nil
 }
 
 // クライアントを除去しルームを破棄する。
@@ -320,6 +330,19 @@ func (h *Hub) handleRoomJoin(client *Client, payload json.RawMessage) {
 	}
 
 	h.mu.Lock()
+	// 登録後〜入室前にゲームが始まった場合、初回入室（名前未設定）は弾く。
+	// リネーム用の room:join 再送（名前設定済み）は通す。
+	// ルームは壊さず本人だけ外して切断する（切断時の Unregister は未登録なら何もしない）。
+	if h.state != StateWaiting && client.Nickname == "" {
+		delete(h.clients, client.PlayerID)
+		h.mu.Unlock()
+		client.Send(&model.OutgoingMessage{
+			Type:    model.MsgError,
+			Payload: model.ErrorPayload{Message: "game already in progress"},
+		})
+		client.Close("game already in progress")
+		return
+	}
 	client.Nickname = p.Nickname
 	players := h.buildPlayerList()
 	h.mu.Unlock()
@@ -361,6 +384,15 @@ func (h *Hub) handleGameStart(client *Client, payload json.RawMessage) {
 		h.mu.Unlock()
 		h.SendError(client.PlayerID, "game already in progress")
 		return
+	}
+	// 接続直後でまだ room:join が届いていない参加者がいる間は開始しない
+	// （名前なしのプレイヤーがゲームに巻き込まれるのを防ぐ）
+	for _, c := range h.clients {
+		if c.Nickname == "" {
+			h.mu.Unlock()
+			h.SendError(client.PlayerID, "a player is still joining")
+			return
+		}
 	}
 	game, err := newGame(p.GameMode, h.questionRepo)
 	if err != nil {
