@@ -51,9 +51,9 @@ func (h *WSHandler) Connect(c *gin.Context) {
 		hub = existing
 	}
 
-	// 作成者だけがホスト。取得〜登録の間に破棄されたルームには入れない。
-	if !hub.Register(client, isCreate) {
-		rejectAndClose(client, "room not found")
+	// 作成者だけがホスト。破棄済み・ゲーム進行中のルームには入れない。
+	if err := hub.Register(client, isCreate); err != nil {
+		rejectAndClose(client, err.Error())
 		return
 	}
 	defer hub.Unregister(client) // 切断時にルーム破棄・通知を行う
