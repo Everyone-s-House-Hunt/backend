@@ -4,6 +4,7 @@ services:
       context: ./app
       dockerfile: Dockerfile.prod
     environment:
+      - GO_PORT=${GO_PORT}
       - DB_HOST=db
       - DB_PORT=3306
       - DB_USER=${DB_USER}
