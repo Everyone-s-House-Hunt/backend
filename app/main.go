@@ -1,10 +1,11 @@
 package main
 
 import (
-	"os"
 	"log"
+	"os"
 
 	"house-hunt/router"
+	"house-hunt/seed"
 	"house-hunt/utils"
 )
 
@@ -14,6 +15,11 @@ func main() {
 
 	// DB接続
 	db := utils.InitDB()
+	if os.Getenv("SEED_BULLET_QUESTIONS") == "true" {
+		if err := seed.EnsureBulletQuestions(db); err != nil {
+			log.Fatalf("ゾンビバレット開発データの投入に失敗しました: %v", err)
+		}
+	}
 
 	sqlDB, err := db.DB()
 	if err != nil {

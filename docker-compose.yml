@@ -24,6 +24,7 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME}
+      - SEED_BULLET_QUESTIONS=true
     depends_on:
       db:
         condition: service_healthy

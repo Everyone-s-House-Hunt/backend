@@ -65,16 +65,16 @@ func (h *QuestionHandler) CreateQuestion(c *gin.Context) {
 		return
 	}
 
-	if req.CorrectIndex >= len(req.Choices) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "Error",
-			"message": "correct_index は choices の要素数未満である必要があります",
-		})
-		return
-	}
-
 	question, err := h.Service.CreateQuestion(req)
 	if err != nil {
+		if service.IsInvalidQuestion(err) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "Error",
+				"message": utils.ErrInvalidInput.Error(),
+				"details": err.Error(),
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "Error",
 			"message": utils.ErrDatabase.Error(),

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,8 +21,9 @@ const (
 
 // answer_data(JSON文字列)のパース先。例 {"question":"赤い果物を10個答えよ","answers":["りんご",...]}
 type bulletAnswerData struct {
-	Question string   `json:"question"`
-	Answers  []string `json:"answers"`
+	Question string              `json:"question"`
+	Answers  []string            `json:"answers"`
+	Aliases  map[string][]string `json:"aliases,omitempty"`
 }
 
 // ゾンビバレット（複数解答リレー）。GameLogic を実装。
@@ -32,8 +34,10 @@ type Bullet struct {
 	mu           sync.Mutex
 	players      []model.PlayerInfo // 参加順スナップショット（固定ループ順）
 	turnIndex    int                // 現ターン = players[turnIndex]
-	answerNorm   map[string]string  // 正規化した正解 → 表示用の元文字列
-	used         map[string]bool    // 既に正解された正規化キー
+	answerKey    map[string]string  // 正規化した入力候補 → canonical key
+	answerLabel  map[string]string  // canonical key → 表示用の元文字列
+	used         map[string]bool    // 既に正解された canonical key
+	usedOrder    []string           // 命中順の表示用正解
 	correctCount int                // 命中数（= len(used)）
 	doneCh       chan struct{}      // 撃破（10命中）で閉じる
 	finished     bool               // 終了後の submit を弾く
@@ -57,13 +61,23 @@ func (g *Bullet) Start(hub *Hub) error {
 	}
 
 	var chosen *bulletAnswerData
+	var chosenAnswerKey map[string]string
+	var chosenAnswerLabel map[string]string
+	var chosenQuestion string
 	for _, q := range pool {
 		var ad bulletAnswerData
 		if err := json.Unmarshal([]byte(q.AnswerData), &ad); err != nil {
 			continue // 壊れた問題はスキップ
 		}
-		if len(ad.Answers) >= bulletTargetHits {
+		answerKey, answerLabel, err := buildBulletAnswerIndex(ad)
+		if err == nil && len(answerLabel) >= bulletTargetHits {
 			chosen = &ad
+			chosenAnswerKey = answerKey
+			chosenAnswerLabel = answerLabel
+			chosenQuestion = ad.Question
+			if chosenQuestion == "" {
+				chosenQuestion = q.Body
+			}
 			break
 		}
 	}
@@ -71,18 +85,14 @@ func (g *Bullet) Start(hub *Hub) error {
 		return fmt.Errorf("no question with at least %d answers", bulletTargetHits)
 	}
 
-	// 正解を正規化して登録（重複検出・照合用）
-	answerNorm := make(map[string]string, len(chosen.Answers))
-	for _, a := range chosen.Answers {
-		answerNorm[normalizeAnswer(a)] = a
-	}
-
 	roundCh := make(chan struct{})
 	g.mu.Lock()
 	g.players = players
 	g.turnIndex = 0
-	g.answerNorm = answerNorm
+	g.answerKey = chosenAnswerKey
+	g.answerLabel = chosenAnswerLabel
 	g.used = make(map[string]bool)
+	g.usedOrder = nil
 	g.correctCount = 0
 	g.doneCh = roundCh
 	g.finished = false
@@ -97,7 +107,7 @@ func (g *Bullet) Start(hub *Hub) error {
 	hub.Broadcast(&model.OutgoingMessage{
 		Type: model.MsgGameBulletStart,
 		Payload: model.BulletStartPayload{
-			Question:        chosen.Question,
+			Question:        chosenQuestion,
 			TargetHits:      bulletTargetHits,
 			TimeLimitSec:    bulletTimeLimitSec,
 			Players:         bps,
@@ -159,12 +169,13 @@ func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.
 		return errors.New("not your turn")
 	}
 
-	display, isAnswer := g.answerNorm[norm]
+	canonicalKey, isAnswer := g.answerKey[norm]
+	display := g.answerLabel[canonicalKey]
 
 	// 不正解 or 重複 → ターン据え置きでミス通知
-	if norm == "" || !isAnswer || g.used[norm] {
+	if norm == "" || !isAnswer || g.used[canonicalKey] {
 		reason := "wrong"
-		if isAnswer && g.used[norm] {
+		if isAnswer && g.used[canonicalKey] {
 			reason = "duplicate"
 		}
 		current := g.players[g.turnIndex].PlayerID
@@ -183,19 +194,15 @@ func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.
 	}
 
 	// 命中（正解）→ 記録してターンを次へ
-	g.used[norm] = true
+	g.used[canonicalKey] = true
+	g.usedOrder = append(g.usedOrder, display)
 	g.correctCount++
 	g.turnIndex = (g.turnIndex + 1) % n
 	correctCount := g.correctCount
 	nextPlayer := g.players[g.turnIndex].PlayerID
 	cleared := correctCount >= bulletTargetHits
 
-	used := make([]string, 0, len(g.used))
-	for k := range g.answerNorm {
-		if g.used[k] {
-			used = append(used, g.answerNorm[k]) // 表示用の元文字列で返す
-		}
-	}
+	used := append([]string(nil), g.usedOrder...)
 	if cleared {
 		g.finished = true
 	}
@@ -224,4 +231,42 @@ func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.
 	}
 
 	return nil
+}
+
+// buildBulletAnswerIndex creates an alias-aware lookup while keeping one
+// canonical key per conceptual answer. Legacy payloads without aliases remain
+// valid. A variant that points to two different answers makes the question
+// unusable rather than allowing duplicate hits.
+func buildBulletAnswerIndex(answerData bulletAnswerData) (map[string]string, map[string]string, error) {
+	answerKey := make(map[string]string)
+	answerLabel := make(map[string]string)
+
+	for _, rawLabel := range answerData.Answers {
+		label := strings.TrimSpace(rawLabel)
+		canonicalKey := normalizeAnswer(label)
+		if canonicalKey == "" {
+			return nil, nil, errors.New("empty bullet answer")
+		}
+		if _, exists := answerLabel[canonicalKey]; exists {
+			return nil, nil, fmt.Errorf("duplicate bullet answer: %s", label)
+		}
+		if owner, exists := answerKey[canonicalKey]; exists && owner != canonicalKey {
+			return nil, nil, fmt.Errorf("conflicting bullet answer: %s", label)
+		}
+		answerLabel[canonicalKey] = label
+		answerKey[canonicalKey] = canonicalKey
+
+		for _, rawAlias := range answerData.Aliases[label] {
+			aliasKey := normalizeAnswer(rawAlias)
+			if aliasKey == "" {
+				return nil, nil, fmt.Errorf("empty alias for bullet answer: %s", label)
+			}
+			if owner, exists := answerKey[aliasKey]; exists && owner != canonicalKey {
+				return nil, nil, fmt.Errorf("conflicting alias for bullet answer: %s", rawAlias)
+			}
+			answerKey[aliasKey] = canonicalKey
+		}
+	}
+
+	return answerKey, answerLabel, nil
 }
