@@ -12,22 +12,22 @@ import (
 )
 
 const (
-	piaceGameMode       = "piace"
-	piaceRounds         = 5  // 出題数
-	piaceTimeLimitSec   = 60 // 制限時間
-	piaceResultPauseSec = 3  // 結果表示〜次ラウンドの間
-	piaceFetchPool      = 50 // 文字数フィルタ用に多めに取得する件数
+	pieceGameMode       = "piece"
+	pieceRounds         = 5  // 出題数
+	pieceTimeLimitSec   = 60 // 制限時間
+	pieceResultPauseSec = 3  // 結果表示〜次ラウンドの間
+	pieceFetchPool      = 50 // 文字数フィルタ用に多めに取得する件数
 )
 
 // answer_data(JSON文字列)のパース先。例 {"question":"日本の首都は？","answer":"とうきょう"}
-type piaceAnswerData struct {
+type pieceAnswerData struct {
 	Question string `json:"question"`
 	Answer   string `json:"answer"` // 正解。この文字数 = マス数 = 人数
 }
 
 // コトバピース（みんなで1つの言葉を1人1文字ずつ埋める協力ゲーム）。GameLogic を実装。
 // 仕様: マス数 = 参加人数。各プレイヤーは参加順に1マスを担当し、全マス正解でクリア。
-type Piace struct {
+type Piece struct {
 	questionRepo QuestionRepo
 	mu           sync.Mutex        // 下記をまとめて保護。ラウンドごとに作り直す
 	answer       []rune            // このラウンドの正解（位置ごとの正解文字）
@@ -36,12 +36,12 @@ type Piace struct {
 	allFilledCh  chan struct{}     // 全員入力完了を Start へ知らせる
 }
 
-func NewPiace(qr QuestionRepo) *Piace {
-	return &Piace{questionRepo: qr}
+func NewPiece(qr QuestionRepo) *Piece {
+	return &Piece{questionRepo: qr}
 }
 
 // ゲーム全体を進行させる。文字数が人数に一致する問題だけを使い、1問ずつラウンドを回す。
-func (g *Piace) Start(hub *Hub) error {
+func (g *Piece) Start(hub *Hub) error {
 	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）
 	n := len(players)
 	if n == 0 {
@@ -49,15 +49,15 @@ func (g *Piace) Start(hub *Hub) error {
 	}
 
 	// 多めに取得してから「答えの文字数 == 人数」のものだけ採用する
-	pool, err := g.questionRepo.GetRandomByGameMode(piaceGameMode, piaceFetchPool)
+	pool, err := g.questionRepo.GetRandomByGameMode(pieceGameMode, pieceFetchPool)
 	if err != nil {
 		return fmt.Errorf("failed to fetch questions: %w", err)
 	}
 
-	questions := make([]model.Question, 0, piaceRounds)
-	answers := make([][]rune, 0, piaceRounds)
+	questions := make([]model.Question, 0, pieceRounds)
+	answers := make([][]rune, 0, pieceRounds)
 	for _, q := range pool {
-		var ad piaceAnswerData
+		var ad pieceAnswerData
 		if err := json.Unmarshal([]byte(q.AnswerData), &ad); err != nil {
 			continue // 壊れた問題はスキップ
 		}
@@ -67,15 +67,15 @@ func (g *Piace) Start(hub *Hub) error {
 		}
 		questions = append(questions, q)
 		answers = append(answers, runes)
-		if len(questions) == piaceRounds {
+		if len(questions) == pieceRounds {
 			break
 		}
 	}
-	if len(questions) < piaceRounds {
-		return fmt.Errorf("not enough questions for %d players: need %d, got %d", n, piaceRounds, len(questions))
+	if len(questions) < pieceRounds {
+		return fmt.Errorf("not enough questions for %d players: need %d, got %d", n, pieceRounds, len(questions))
 	}
 
-	totalRounds := piaceRounds
+	totalRounds := pieceRounds
 
 	// === ラウンドループ ===
 	for i := 0; i < totalRounds; i++ {
@@ -83,15 +83,15 @@ func (g *Piace) Start(hub *Hub) error {
 		q := questions[i]
 		answerRunes := answers[i]
 
-		var ad piaceAnswerData
+		var ad pieceAnswerData
 		_ = json.Unmarshal([]byte(q.AnswerData), &ad) // 上でパース済みなので失敗しない
 
 		// 担当割り当て: players[j] → position j（1:1）
 		posOf := make(map[string]int, n)
-		slots := make([]model.PiaceSlot, 0, n)
+		slots := make([]model.PieceSlot, 0, n)
 		for j, p := range players {
 			posOf[p.PlayerID] = j
-			slots = append(slots, model.PiaceSlot{
+			slots = append(slots, model.PieceSlot{
 				Position: j,
 				PlayerID: p.PlayerID,
 				Nickname: p.Nickname,
@@ -109,19 +109,19 @@ func (g *Piace) Start(hub *Hub) error {
 
 		// お題・マス数・担当・制限時間を配信
 		hub.Broadcast(&model.OutgoingMessage{
-			Type: model.MsgGamePiaceRoundStart,
-			Payload: model.PiaceRoundStartPayload{
+			Type: model.MsgGamePieceRoundStart,
+			Payload: model.PieceRoundStartPayload{
 				Round:        roundNum,
 				TotalRounds:  totalRounds,
 				Question:     ad.Question,
 				SlotCount:    n,
 				Slots:        slots,
-				TimeLimitSec: piaceTimeLimitSec,
+				TimeLimitSec: pieceTimeLimitSec,
 			},
 		})
 
 		// 全員入力 or 時間切れ のどちらか早いほうまで待つ
-		roundCtx, cancel := context.WithTimeout(hub.Context(), piaceTimeLimitSec*time.Second)
+		roundCtx, cancel := context.WithTimeout(hub.Context(), pieceTimeLimitSec*time.Second)
 		timedOut := false
 		select {
 		case <-roundCh: // 全員入力完了 → 即判定
@@ -141,7 +141,7 @@ func (g *Piace) Start(hub *Hub) error {
 		g.mu.Unlock()
 
 		assembled := make([]rune, n) // 表示用の組み立て結果（未入力は '＿'）
-		slotResults := make([]model.PiaceSlotResult, 0, n)
+		slotResults := make([]model.PieceSlotResult, 0, n)
 		allCorrect := true
 		for j, p := range players {
 			input := filled[p.PlayerID]
@@ -155,7 +155,7 @@ func (g *Piace) Start(hub *Hub) error {
 			} else {
 				assembled[j] = []rune(input)[0]
 			}
-			slotResults = append(slotResults, model.PiaceSlotResult{
+			slotResults = append(slotResults, model.PieceSlotResult{
 				Position:    j,
 				PlayerID:    p.PlayerID,
 				Nickname:    p.Nickname,
@@ -167,8 +167,8 @@ func (g *Piace) Start(hub *Hub) error {
 
 		// ラウンド結果を配信
 		hub.Broadcast(&model.OutgoingMessage{
-			Type: model.MsgGamePiaceRoundResult,
-			Payload: model.PiaceRoundResultPayload{
+			Type: model.MsgGamePieceRoundResult,
+			Payload: model.PieceRoundResultPayload{
 				Round:         roundNum,
 				Assembled:     string(assembled),
 				CorrectAnswer: string(answerRunes),
@@ -197,7 +197,7 @@ func (g *Piace) Start(hub *Hub) error {
 		select {
 		case <-hub.Context().Done():
 			return nil
-		case <-time.After(piaceResultPauseSec * time.Second):
+		case <-time.After(pieceResultPauseSec * time.Second):
 		}
 	}
 
@@ -210,14 +210,14 @@ func (g *Piace) Start(hub *Hub) error {
 	return nil
 }
 
-// ゲーム中メッセージのうち game:piace_submit を処理する。GameLogic を実装。
-func (g *Piace) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
-	if msgType != model.MsgGamePiaceSubmit {
+// ゲーム中メッセージのうち game:piece_submit を処理する。GameLogic を実装。
+func (g *Piece) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
+	if msgType != model.MsgGamePieceSubmit {
 		return fmt.Errorf("unsupported message type: %s", msgType)
 	}
-	var p model.PiaceSubmitPayload
+	var p model.PieceSubmitPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
-		return errors.New("invalid game:piace_submit payload")
+		return errors.New("invalid game:piece_submit payload")
 	}
 
 	char := normalizeAnswer(p.Char)
@@ -238,8 +238,8 @@ func (g *Piace) HandleMessage(hub *Hub, playerID, msgType string, payload json.R
 
 	// 入力進捗を全員に通知（内容は伏せる）
 	hub.Broadcast(&model.OutgoingMessage{
-		Type: model.MsgGamePiaceProgress,
-		Payload: model.PiaceProgressPayload{
+		Type: model.MsgGamePieceProgress,
+		Payload: model.PieceProgressPayload{
 			FilledCount: filledCount,
 			SlotCount:   slotCount,
 		},

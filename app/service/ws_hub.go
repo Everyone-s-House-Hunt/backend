@@ -27,8 +27,8 @@ func newGame(mode string, qr QuestionRepo) (GameLogic, error) {
 		return NewInoshishiPanic(qr), nil
 	case orderGameMode:
 		return NewMojiOrder(qr), nil
-	case piaceGameMode:
-		return NewPiace(qr), nil
+	case pieceGameMode:
+		return NewPiece(qr), nil
 	case bulletGameMode:
 		return NewBullet(qr), nil
 	default:
