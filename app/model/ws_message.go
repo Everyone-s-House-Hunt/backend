@@ -9,7 +9,7 @@ const (
 	MsgGameStart  = "game:start"  // ゲーム開始（ホストのみ）
 	MsgGameVote   = "game:vote"   // 投票（イノシシパニック）
 	MsgGameAnswer = "game:answer" // 回答（モジオーダー：現ターンのプレイヤーのみ）
-	MsgGamePiaceSubmit = "game:piace_submit" // 担当マスの1文字を送信（コトバピース）
+	MsgGamePieceSubmit = "game:piece_submit" // 担当マスの1文字を送信（コトバピース）
 	MsgGameBulletSubmit = "game:bullet_submit" // 回答を送信（ゾンビバレット：現ターンのプレイヤーのみ）
 
 	// サーバー → クライアント
@@ -21,9 +21,9 @@ const (
 	MsgGameRoundResult  = "game:round_result"   // ラウンド結果（イノシシ）
 	MsgGameTurnStart    = "game:turn_start"     // ターン開始（モジオーダー）
 	MsgGameAnswerResult = "game:answer_result"  // 回答結果（モジオーダー）
-	MsgGamePiaceRoundStart  = "game:piace_round_start"  // ラウンド開始（コトバピース）
-	MsgGamePiaceProgress    = "game:piace_progress"     // 入力進捗（コトバピース）
-	MsgGamePiaceRoundResult = "game:piace_round_result" // ラウンド結果（コトバピース）
+	MsgGamePieceRoundStart  = "game:piece_round_start"  // ラウンド開始（コトバピース）
+	MsgGamePieceProgress    = "game:piece_progress"     // 入力進捗（コトバピース）
+	MsgGamePieceRoundResult = "game:piece_round_result" // ラウンド結果（コトバピース）
 	MsgGameBulletStart  = "game:bullet_start"   // ゲーム開始（ゾンビバレット）
 	MsgGameBulletHit    = "game:bullet_hit"     // 命中＝正解（ゾンビバレット）
 	MsgGameBulletMiss   = "game:bullet_miss"    // ミス＝不正解/重複（ゾンビバレット）
@@ -139,38 +139,38 @@ type GameOverPayload struct {
 	PlayerID   string `json:"player_id,omitempty"` // モジオーダーで脱落したプレイヤー
 }
 
-// --- コトバピース（piace） ---
+// --- コトバピース（piece） ---
 
 // 担当マスの1文字を送信する。担当 position はサーバー側で固定済みなので char のみ。
-type PiaceSubmitPayload struct {
+type PieceSubmitPayload struct {
 	Char string `json:"char"`
 }
 
 // 1マスの担当割り当て。
-type PiaceSlot struct {
+type PieceSlot struct {
 	Position int    `json:"position"`
 	PlayerID string `json:"player_id"`
 	Nickname string `json:"nickname"`
 }
 
 // ラウンド開始。お題・マス数(=人数)・各マスの担当・制限時間を配信する。
-type PiaceRoundStartPayload struct {
+type PieceRoundStartPayload struct {
 	Round        int         `json:"round"`
 	TotalRounds  int         `json:"total_rounds"`
 	Question     string      `json:"question"`
 	SlotCount    int         `json:"slot_count"` // = 参加人数 n
-	Slots        []PiaceSlot `json:"slots"`
+	Slots        []PieceSlot `json:"slots"`
 	TimeLimitSec int         `json:"time_limit_sec"`
 }
 
 // 入力進捗（内容は伏せる）。
-type PiaceProgressPayload struct {
+type PieceProgressPayload struct {
 	FilledCount int `json:"filled_count"`
 	SlotCount   int `json:"slot_count"`
 }
 
 // 1マスの判定結果。正解文字は全マス開示する。
-type PiaceSlotResult struct {
+type PieceSlotResult struct {
 	Position    int    `json:"position"`
 	PlayerID    string `json:"player_id"`
 	Nickname    string `json:"nickname"`
@@ -180,12 +180,12 @@ type PiaceSlotResult struct {
 }
 
 // ラウンド結果。組み立てた文字列と各マスの正誤を配信する。
-type PiaceRoundResultPayload struct {
+type PieceRoundResultPayload struct {
 	Round         int               `json:"round"`
 	Assembled     string            `json:"assembled"`
 	CorrectAnswer string            `json:"correct_answer"`
 	IsCorrect     bool              `json:"is_correct"`
-	Slots         []PiaceSlotResult `json:"slots"`
+	Slots         []PieceSlotResult `json:"slots"`
 }
 
 // --- ゾンビバレット（bullet） ---
