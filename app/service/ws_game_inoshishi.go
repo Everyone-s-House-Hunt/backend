@@ -15,7 +15,7 @@ const (
 	inoshishiGameMode       = "panic"
 	inoshishiQuestions      = 10 // 出題数
 	inoshishiTimeLimitSec   = 10 // 制限時間
-	inoshishiResultPauseSec = 3  // 結果表示〜次ラウンドの間
+	inoshishiResultPauseSec = 6  // 結果表示〜次ラウンドの間（フロント演出: 得票1.5s+扉3.5s に合わせる）
 )
 
 // answer_data(JSON文字列)のパース先。例 {"choices":["東京","大阪"],"correct_index":0}
