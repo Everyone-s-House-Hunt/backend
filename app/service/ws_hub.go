@@ -380,7 +380,7 @@ func (h *Hub) handleGameStart(client *Client, payload json.RawMessage) {
 		h.SendError(client.PlayerID, "only the host can start the game")
 		return
 	}
-	if h.state != StateWaiting { // 二重開始防止
+	if h.state == StatePlaying { // 二重開始防止（finished からの再スタートは許可）
 		h.mu.Unlock()
 		h.SendError(client.PlayerID, "game already in progress")
 		return
