@@ -6,6 +6,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+
+	"time"
 )
 
 // WebSocket 接続の入口。全ルームを管理する RoomManager を1つ持つ。
@@ -57,6 +59,8 @@ func (h *WSHandler) Connect(c *gin.Context) {
 		return
 	}
 	defer hub.Unregister(client) // 切断時にルーム破棄・通知を行う
+
+	go client.KeepAlive(30*time.Second, 10*time.Second)
 
 	// 受信ループ。メッセージが来るたび Hub へ渡す。切断で err が返り抜ける。
 	for {

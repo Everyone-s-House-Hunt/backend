@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -81,6 +82,25 @@ func (c *Client) Send(msg *model.OutgoingMessage) error {
 func (c *Client) Close(reason string) {
 	c.Conn.Close(websocket.StatusNormalClosure, reason)
 	c.cancel()
+}
+
+func (c *Client) KeepAlive(interval, timeout time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(c.ctx, timeout)
+			err := c.Conn.Ping(ctx)
+			cancel()
+			if err != nil {
+				c.Close("ping timeout")
+				return
+			}
+		}
+	}
 }
 
 // ルームの状態: waiting → playing → finished
