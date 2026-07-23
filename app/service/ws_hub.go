@@ -21,6 +21,12 @@ type GameLogic interface {
 	HandleMessage(hub *Hub, runID uint64, playerID, msgType string, payload json.RawMessage) error
 }
 
+// 途中退出後も続行できるゲームだけが実装する任意インターフェース。
+// Hubの配信ロック中に呼ばれるため、このメソッド内ではBroadcastしない。
+type GamePlayerLeaveHandler interface {
+	HandlePlayerLeave(playerID string, players []model.PlayerInfo) model.GamePlayerLeftPayload
+}
+
 // game_mode 文字列から対応するゲームを生成する。新モードはここに足す。
 func newGame(mode string, qr QuestionRepo) (GameLogic, error) {
 	switch mode {
@@ -192,7 +198,7 @@ func (h *Hub) Register(client *Client, isHost bool) error {
 }
 
 // クライアントを除去する。残りがいれば接続を維持し、ホスト退出時は参加順で引き継ぐ。
-// ゲーム中の退出では実行中runを無効化し、ゲームだけを中断してルームへ戻す。
+// 対応ゲームは残ったメンバーで続行し、それ以外はゲームだけを中断してルームへ戻す。
 func (h *Hub) Unregister(client *Client) {
 	// 一覧更新とゲーム中断の通知順を全クライアントで揃える。
 	h.broadcastMu.Lock()
@@ -240,8 +246,10 @@ func (h *Hub) Unregister(client *Client) {
 	players := h.buildPlayerList()
 	remaining := h.copyClients()
 	wasPlaying := h.state == StatePlaying
+	game := h.game
+	leaveHandler, canContinue := game.(GamePlayerLeaveHandler)
 	var cancelGame context.CancelFunc
-	if wasPlaying {
+	if wasPlaying && !canContinue {
 		h.state = StateCancelling
 		cancelGame = h.gameCancel
 		// 先にrunを無効化することで、cancelと競合した旧ゲームイベントを抑止する。
@@ -257,6 +265,13 @@ func (h *Hub) Unregister(client *Client) {
 		cancelGame()
 	}
 
+	var gamePlayerLeft *model.GamePlayerLeftPayload
+	if wasPlaying && canContinue {
+		payload := leaveHandler.HandlePlayerLeave(client.PlayerID, players)
+		payload.DisconnectedNickname = client.Nickname
+		gamePlayerLeft = &payload
+	}
+
 	sendToClients(remaining, &model.OutgoingMessage{
 		Type: model.MsgRoomPlayerLeft,
 		Payload: model.RoomPlayerLeftPayload{
@@ -266,7 +281,12 @@ func (h *Hub) Unregister(client *Client) {
 		},
 	})
 
-	if wasPlaying {
+	if gamePlayerLeft != nil {
+		sendToClients(remaining, &model.OutgoingMessage{
+			Type:    model.MsgGamePlayerLeft,
+			Payload: *gamePlayerLeft,
+		})
+	} else if wasPlaying {
 		sendToClients(remaining, &model.OutgoingMessage{
 			Type: model.MsgGameCancelled,
 			Payload: model.GameCancelledPayload{

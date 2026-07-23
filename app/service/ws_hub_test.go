@@ -195,6 +195,7 @@ func TestHostLeaveDuringGameTransfersHostAndCancelsGame(t *testing.T) {
 	gameCtx, gameCancel := context.WithCancel(hub.Context())
 	hub.mu.Lock()
 	hub.state = StatePlaying
+	hub.game = NewPiace(nil)
 	hub.gameCtx = gameCtx
 	hub.gameCancel = gameCancel
 	hub.gameRunID = 11
@@ -253,6 +254,7 @@ func TestLeaveDuringGameCancelsRunAndReturnsRoomToWaiting(t *testing.T) {
 	gameCtx, gameCancel := context.WithCancel(hub.Context())
 	hub.mu.Lock()
 	hub.state = StatePlaying
+	hub.game = NewMojiOrder(nil)
 	hub.gameCtx = gameCtx
 	hub.gameCancel = gameCancel
 	hub.gameRunID = 7
@@ -294,6 +296,62 @@ func TestLeaveDuringGameCancelsRunAndReturnsRoomToWaiting(t *testing.T) {
 	replacement, _ := newHubTestClient("replacement", "補充")
 	if err := hub.Register(replacement, false); err != nil {
 		t.Fatalf("register replacement after cancellation: %v", err)
+	}
+}
+
+func TestPanicLeaveDuringGameKeepsRunAndRecalculatesVotes(t *testing.T) {
+	rm := NewRoomManager(nil)
+	host, hostMessages := newHubTestClient("host", "ホスト")
+	hub, ok := rm.CreateRoomWithHost("room", host)
+	if !ok {
+		t.Fatal("failed to create room")
+	}
+	leaver, _ := newHubTestClient("guest", "ゲスト")
+	if err := hub.Register(leaver, false); err != nil {
+		t.Fatalf("register guest: %v", err)
+	}
+
+	panicGame := NewInoshishiPanic(nil)
+	roundCh := make(chan struct{})
+	panicGame.votes = map[string]int{"host": 0, "guest": 1}
+	panicGame.allVotedCh = roundCh
+	gameCtx, gameCancel := context.WithCancel(hub.Context())
+	hub.mu.Lock()
+	hub.state = StatePlaying
+	hub.game = panicGame
+	hub.gameCtx = gameCtx
+	hub.gameCancel = gameCancel
+	hub.gameRunID = 9
+	hub.mu.Unlock()
+
+	hub.Unregister(leaver)
+
+	assertContextActive(t, gameCtx)
+	hub.mu.Lock()
+	state := hub.state
+	runID := hub.gameRunID
+	hub.mu.Unlock()
+	if state != StatePlaying || runID != 9 {
+		t.Fatalf("state=%s runID=%d, want state=%s runID=9", state, runID, StatePlaying)
+	}
+	if got := hostMessages.types(); len(got) != 2 ||
+		got[0] != model.MsgRoomPlayerLeft || got[1] != model.MsgGamePlayerLeft {
+		t.Fatalf("messages=%v, want [%s %s]", got, model.MsgRoomPlayerLeft, model.MsgGamePlayerLeft)
+	}
+	select {
+	case <-roundCh:
+	default:
+		t.Fatal("round did not complete after all remaining players had voted")
+	}
+
+	hostMessages.mu.Lock()
+	payload, ok := hostMessages.messages[1].Payload.(model.GamePlayerLeftPayload)
+	hostMessages.mu.Unlock()
+	if !ok {
+		t.Fatalf("payload type=%T", hostMessages.messages[1].Payload)
+	}
+	if payload.VotedCount != 1 || payload.TotalCount != 1 {
+		t.Fatalf("vote progress=(%d/%d), want 1/1", payload.VotedCount, payload.TotalCount)
 	}
 }
 

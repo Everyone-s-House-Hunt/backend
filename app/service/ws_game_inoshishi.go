@@ -192,6 +192,33 @@ func (g *InoshishiPanic) HandleMessage(hub *Hub, runID uint64, playerID, msgType
 	return g.handleVote(hub, runID, playerID, p.ChoiceIndex)
 }
 
+// 退出者の票を集計対象から外し、残った全員が投票済みなら即集計へ進める。
+func (g *InoshishiPanic) HandlePlayerLeave(
+	playerID string,
+	players []model.PlayerInfo,
+) model.GamePlayerLeftPayload {
+	g.mu.Lock()
+	delete(g.votes, playerID)
+	votedCount := len(g.votes)
+	totalCount := len(players)
+	ch := g.allVotedCh
+	if ch != nil && votedCount >= totalCount {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+	}
+	g.mu.Unlock()
+
+	return model.GamePlayerLeftPayload{
+		DisconnectedPlayerID: playerID,
+		Players:              players,
+		VotedCount:           votedCount,
+		TotalCount:           totalCount,
+	}
+}
+
 // 1人分の投票を受け付ける。複数人が同時に投票しても壊れないようロックする。
 func (g *InoshishiPanic) handleVote(hub *Hub, runID uint64, playerID string, choiceIndex int) error {
 	if choiceIndex != 0 && choiceIndex != 1 {

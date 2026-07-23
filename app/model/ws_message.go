@@ -28,6 +28,7 @@ const (
 	MsgGameBulletStart      = "game:bullet_start"       // ゲーム開始（ゾンビバレット）
 	MsgGameBulletHit        = "game:bullet_hit"         // 命中＝正解（ゾンビバレット）
 	MsgGameBulletMiss       = "game:bullet_miss"        // ミス＝不正解/重複（ゾンビバレット）
+	MsgGamePlayerLeft       = "game:player_left"        // 対応ゲームの途中退出・継続状態
 	MsgGameOver             = "game:over"               // ゲームオーバー
 	MsgGameClear            = "game:clear"              // 全クリア
 	MsgGameCancelled        = "game:cancelled"          // 参加者退出によるゲーム中断
@@ -101,6 +102,17 @@ type RoomDestroyedPayload struct {
 type GameCancelledPayload struct {
 	Reason               string `json:"reason"`
 	DisconnectedPlayerID string `json:"disconnected_player_id"`
+}
+
+// 途中退出後も続行できるゲームの更新状態。
+// CurrentPlayerID はゾンビバレット、VotedCount はイノシシパニックで使用する。
+type GamePlayerLeftPayload struct {
+	DisconnectedPlayerID string       `json:"disconnected_player_id"`
+	DisconnectedNickname string       `json:"disconnected_nickname"`
+	Players              []PlayerInfo `json:"players"`
+	CurrentPlayerID      string       `json:"current_player_id,omitempty"`
+	VotedCount           int          `json:"voted_count"`
+	TotalCount           int          `json:"total_count"`
 }
 
 type GameRoundStartPayload struct {

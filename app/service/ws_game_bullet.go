@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -29,19 +30,25 @@ type bulletAnswerData struct {
 // 仕様: お題の正解を順番に1つずつ答える。正解で次の人へ・不正解/重複は同じ人が続行。
 // 全体共有の60秒以内に10命中で撃破クリア、時間切れでゲームオーバー。
 type Bullet struct {
-	questionRepo QuestionRepo
-	mu           sync.Mutex
-	players      []model.PlayerInfo // 参加順スナップショット（往復順の基準）
-	turnIndex    int                // 現ターン = players[turnIndex]
-	answerNorm   map[string]string  // 正規化した正解 → 表示用の元文字列
-	used         map[string]bool    // 既に正解された正規化キー
-	correctCount int                // 命中数（= len(used)）
-	doneCh       chan struct{}      // 撃破（10命中）で閉じる
-	finished     bool               // 終了後の submit を弾く
+	questionRepo  QuestionRepo
+	mu            sync.Mutex
+	players       []model.PlayerInfo // 参加順スナップショット（往復順の基準）
+	turnIndex     int                // 現ターン = players[turnIndex]
+	turnDirection int                // 1=右方向、-1=左方向、0=1人プレイ
+	answerNorm    map[string]string  // 正規化した正解 → 表示用の元文字列
+	used          map[string]bool    // 既に正解された正規化キー
+	correctCount  int                // 命中数（= len(used)）
+	doneCh        chan struct{}      // 撃破（10命中）で閉じる
+	finished      bool               // 終了後の submit を弾く
+	started       bool               // players初期化済みか
+	departed      map[string]bool    // Start初期化と退出が競合した場合の除外用
 }
 
 func NewBullet(qr QuestionRepo) *Bullet {
-	return &Bullet{questionRepo: qr}
+	return &Bullet{
+		questionRepo: qr,
+		departed:     make(map[string]bool),
+	}
 }
 
 // 正解数から次の回答者を決める。両端を2回ずつ通る往復順を繰り返す。
@@ -60,15 +67,27 @@ func bulletTurnIndex(correctCount, playerCount int) int {
 	return playerCount*2 - 1 - step
 }
 
+// 現在位置と方向から、両端を2回ずつ通る次のターンを求める。
+func advanceBulletTurn(index, direction, playerCount int) (int, int) {
+	if playerCount <= 1 {
+		return 0, 0
+	}
+	if direction == 0 {
+		direction = 1
+	}
+	next := index + direction
+	if next >= playerCount {
+		return playerCount - 1, -1
+	}
+	if next < 0 {
+		return 0, 1
+	}
+	return next, direction
+}
+
 // ゲーム全体を進行させる。正解10個以上のお題を1問使い、全体タイマーで撃破か時間切れを待つ。
 func (g *Bullet) Start(hub *Hub, gameCtx context.Context, runID uint64) error {
 	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）= 往復順の基準
-	if len(players) == 0 {
-		return errors.New("no players")
-	}
-	if len(players) > bulletMaxPlayers {
-		return fmt.Errorf("zombie bullet supports at most %d players", bulletMaxPlayers)
-	}
 
 	// プールから取得し、正解が目標数以上ある問題を1つ採用する
 	pool, err := g.questionRepo.GetRandomByGameMode(bulletGameMode, bulletFetchPool)
@@ -99,13 +118,34 @@ func (g *Bullet) Start(hub *Hub, gameCtx context.Context, runID uint64) error {
 
 	roundCh := make(chan struct{})
 	g.mu.Lock()
+	activePlayers := make([]model.PlayerInfo, 0, len(players))
+	for _, player := range players {
+		if !g.departed[player.PlayerID] {
+			activePlayers = append(activePlayers, player)
+		}
+	}
+	players = activePlayers
+	if len(players) == 0 {
+		g.mu.Unlock()
+		return errors.New("no players")
+	}
+	if len(players) > bulletMaxPlayers {
+		g.mu.Unlock()
+		return fmt.Errorf("zombie bullet supports at most %d players", bulletMaxPlayers)
+	}
 	g.players = players
 	g.turnIndex = 0
+	if len(players) > 1 {
+		g.turnDirection = 1
+	} else {
+		g.turnDirection = 0
+	}
 	g.answerNorm = answerNorm
 	g.used = make(map[string]bool)
 	g.correctCount = 0
 	g.doneCh = roundCh
 	g.finished = false
+	g.started = true
 	g.mu.Unlock()
 
 	// 往復順の基準となる参加順を配信
@@ -207,7 +247,7 @@ func (g *Bullet) HandleMessage(hub *Hub, runID uint64, playerID, msgType string,
 	correctCount := g.correctCount
 	cleared := correctCount >= bulletTargetHits
 	if !cleared {
-		g.turnIndex = bulletTurnIndex(correctCount, n)
+		g.turnIndex, g.turnDirection = advanceBulletTurn(g.turnIndex, g.turnDirection, n)
 	}
 	nextPlayer := g.players[g.turnIndex].PlayerID
 
@@ -245,4 +285,75 @@ func (g *Bullet) HandleMessage(hub *Hub, runID uint64, playerID, msgType string,
 	}
 
 	return nil
+}
+
+// 退出者を往復順から除外し、現在回答者なら進行方向上の次の人へ移す。
+// 命中数・回答済み一覧・全体タイマーは変更しない。
+func (g *Bullet) HandlePlayerLeave(
+	playerID string,
+	players []model.PlayerInfo,
+) model.GamePlayerLeftPayload {
+	sort.Slice(players, func(i, j int) bool {
+		return players[i].JoinSeq < players[j].JoinSeq
+	})
+
+	g.mu.Lock()
+	g.departed[playerID] = true
+
+	if !g.started || len(g.players) == 0 {
+		g.mu.Unlock()
+		return model.GamePlayerLeftPayload{
+			DisconnectedPlayerID: playerID,
+			Players:              players,
+			TotalCount:           len(players),
+		}
+	}
+
+	oldPlayers := g.players
+	oldCurrentIndex := g.turnIndex
+	oldCurrentID := oldPlayers[oldCurrentIndex].PlayerID
+	removedIndex := -1
+	for i, player := range oldPlayers {
+		if player.PlayerID == playerID {
+			removedIndex = i
+			break
+		}
+	}
+
+	g.players = append([]model.PlayerInfo(nil), players...)
+	if len(g.players) == 1 {
+		g.turnIndex = 0
+		g.turnDirection = 0
+	} else if oldCurrentID != playerID {
+		for i, player := range g.players {
+			if player.PlayerID == oldCurrentID {
+				g.turnIndex = i
+				break
+			}
+		}
+	} else if g.turnDirection < 0 {
+		nextIndex := removedIndex - 1
+		if nextIndex < 0 {
+			nextIndex = 0
+			g.turnDirection = 1
+		}
+		g.turnIndex = nextIndex
+	} else {
+		nextIndex := removedIndex
+		if nextIndex >= len(g.players) {
+			nextIndex = len(g.players) - 1
+			g.turnDirection = -1
+		}
+		g.turnIndex = nextIndex
+	}
+
+	currentPlayerID := g.players[g.turnIndex].PlayerID
+	g.mu.Unlock()
+
+	return model.GamePlayerLeftPayload{
+		DisconnectedPlayerID: playerID,
+		Players:              players,
+		CurrentPlayerID:      currentPlayerID,
+		TotalCount:           len(players),
+	}
 }
