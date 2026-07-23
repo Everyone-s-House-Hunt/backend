@@ -13,7 +13,7 @@ import (
 
 const (
 	bulletGameMode     = "bullet"
-	bulletTimeLimitSec = 60 // 全体で共有する制限時間
+	bulletTimeLimitSec = 85 // 全体で共有する制限時間
 	bulletTargetHits   = 10 // 撃破に必要な命中（正解）数
 	bulletFetchPool    = 30 // 正解数フィルタ用に多めに取得する件数
 )
@@ -26,7 +26,7 @@ type bulletAnswerData struct {
 
 // ゾンビバレット（複数解答リレー）。GameLogic を実装。
 // 仕様: お題の正解を順番に1つずつ答える。正解で次の人へ・不正解/重複は同じ人が続行。
-// 全体共有の60秒以内に10命中で撃破クリア、時間切れでゲームオーバー。
+// 全体共有の85秒以内に10命中で撃破クリア、時間切れでゲームオーバー。
 type Bullet struct {
 	questionRepo QuestionRepo
 	mu           sync.Mutex

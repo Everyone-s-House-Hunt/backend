@@ -206,7 +206,7 @@ type BulletPlayer struct {
 type BulletStartPayload struct {
 	Question        string         `json:"question"`
 	TargetHits      int            `json:"target_hits"`       // = 10
-	TimeLimitSec    int            `json:"time_limit_sec"`    // = 60
+	TimeLimitSec    int            `json:"time_limit_sec"`    // = 85
 	Players         []BulletPlayer `json:"players"`           // 固定ループ順
 	CurrentPlayerID string         `json:"current_player_id"` // 先頭のターン
 }
