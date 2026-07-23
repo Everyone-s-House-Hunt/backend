@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -352,6 +353,109 @@ func TestPanicLeaveDuringGameKeepsRunAndRecalculatesVotes(t *testing.T) {
 	}
 	if payload.VotedCount != 1 || payload.TotalCount != 1 {
 		t.Fatalf("vote progress=(%d/%d), want 1/1", payload.VotedCount, payload.TotalCount)
+	}
+}
+
+// テスト用: 質問取得を即座に失敗させ、ゲーム進行goroutineを速やかに終わらせる。
+type errorQuestionRepo struct{}
+
+func (errorQuestionRepo) GetRandomByGameMode(gameMode string, limit int) ([]model.Question, error) {
+	return nil, errors.New("no questions in test")
+}
+
+func TestGameStartRejectedUntilAllPlayersReturnToLobby(t *testing.T) {
+	rm := NewRoomManager(errorQuestionRepo{})
+	host, hostMessages := newHubTestClient("host", "ホスト")
+	hub, ok := rm.CreateRoomWithHost("room", host)
+	if !ok {
+		t.Fatal("failed to create room")
+	}
+	guest, _ := newHubTestClient("guest", "ゲスト")
+	if err := hub.Register(guest, false); err != nil {
+		t.Fatalf("register guest: %v", err)
+	}
+
+	// 前回のゲームが正常終了した状態を再現する（両者ともまだ結果画面にいる＝InLobby=false）。
+	hub.mu.Lock()
+	hub.state = StatePlaying
+	hub.gameRunID = 5
+	hub.mu.Unlock()
+	hub.finishGame(5, host.PlayerID, nil)
+
+	hub.mu.Lock()
+	hostInLobby, guestInLobby := host.InLobby, guest.InLobby
+	hub.mu.Unlock()
+	if hostInLobby || guestInLobby {
+		t.Fatalf("InLobby after finishGame = (host=%v, guest=%v), want (false, false)", hostInLobby, guestInLobby)
+	}
+
+	startPayload := json.RawMessage(`{"game_mode":"panic"}`)
+
+	// 誰もロビーに戻っていない: 拒否される
+	hub.handleGameStart(host, startPayload)
+	hub.mu.Lock()
+	state := hub.state
+	hub.mu.Unlock()
+	if state != StateFinished {
+		t.Fatalf("state after rejected start = %s, want %s", state, StateFinished)
+	}
+	if got := hostMessages.types(); len(got) == 0 || got[len(got)-1] != model.MsgError {
+		t.Fatalf("host messages = %v, want last message to be %s", got, model.MsgError)
+	}
+
+	// ゲスト側だけ戻った: ホストがまだなので依然拒否される
+	hub.handleRoomBackToLobby(guest)
+	hub.handleGameStart(host, startPayload)
+	hub.mu.Lock()
+	state = hub.state
+	hub.mu.Unlock()
+	if state != StateFinished {
+		t.Fatalf("state while host has not returned = %s, want %s", state, StateFinished)
+	}
+
+	// 全員戻った: ゲーム開始が許可される
+	hub.handleRoomBackToLobby(host)
+	hub.handleGameStart(host, startPayload)
+	hub.mu.Lock()
+	state = hub.state
+	hub.mu.Unlock()
+	if state != StatePlaying {
+		t.Fatalf("state after all players returned = %s, want %s", state, StatePlaying)
+	}
+}
+
+func TestRoomBackToLobbyBroadcastsPlayerStatus(t *testing.T) {
+	rm := NewRoomManager(nil)
+	host, hostMessages := newHubTestClient("host", "ホスト")
+	hub, ok := rm.CreateRoomWithHost("room", host)
+	if !ok {
+		t.Fatal("failed to create room")
+	}
+	guest, guestMessages := newHubTestClient("guest", "ゲスト")
+	if err := hub.Register(guest, false); err != nil {
+		t.Fatalf("register guest: %v", err)
+	}
+	guest.InLobby = false
+
+	hub.handleRoomBackToLobby(guest)
+
+	for name, recorder := range map[string]*messageRecorder{"host": hostMessages, "guest": guestMessages} {
+		got := recorder.types()
+		if len(got) != 1 || got[0] != model.MsgRoomPlayerStatus {
+			t.Fatalf("%s messages = %v, want [%s]", name, got, model.MsgRoomPlayerStatus)
+		}
+	}
+
+	guestMessages.mu.Lock()
+	payload, ok := guestMessages.messages[0].Payload.(model.RoomPlayerStatusPayload)
+	guestMessages.mu.Unlock()
+	if !ok {
+		t.Fatalf("payload type = %T", guestMessages.messages[0].Payload)
+	}
+	for _, p := range payload.Players {
+		if p.PlayerID == guest.PlayerID && !p.InLobby {
+			t.Fatal("guest InLobby was not reflected in broadcast payload")
+		}
 	}
 }
 

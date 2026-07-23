@@ -53,7 +53,8 @@ type Client struct {
 	PlayerID string
 	Nickname string
 	IsHost   bool
-	JoinSeq  int // 参加順（ターン制ゲームの順番に使う）
+	JoinSeq  int  // 参加順（ターン制ゲームの順番に使う）
+	InLobby  bool // ロビー画面に戻っている（room:back_to_lobby送信済み）か
 	Conn     *websocket.Conn
 	ctx      context.Context // 切断で cancel される
 	cancel   context.CancelFunc
@@ -189,6 +190,7 @@ func (h *Hub) Register(client *Client, isHost bool) error {
 	}
 	client.IsHost = isHost
 	client.JoinSeq = h.joinCounter // 参加順を採番
+	client.InLobby = true          // 接続直後はロビー画面にいる扱い
 	h.joinCounter++
 	if isHost {
 		h.hostID = client.PlayerID
@@ -425,10 +427,19 @@ func (h *Hub) finishGame(runID uint64, starterID string, err error) {
 		return
 	}
 	target := h.clients[starterID]
+	var players []model.PlayerInfo
+	var clients []*Client
 	if err != nil {
 		h.state = StateWaiting
 	} else {
 		h.state = StateFinished
+		// 正常終了時のみ、次回開始前に全員の再入室確認を必須にする。
+		// （開始直後に失敗した場合はまだ誰もロビーを離れていないので巻き戻さない）
+		for _, c := range h.clients {
+			c.InLobby = false
+		}
+		players = h.buildPlayerList()
+		clients = h.copyClients()
 	}
 	h.game = nil
 	h.gameMode = ""
@@ -437,12 +448,20 @@ func (h *Hub) finishGame(runID uint64, starterID string, err error) {
 	h.gameRunID = 0
 	h.mu.Unlock()
 
-	if err != nil && target != nil {
-		_ = target.Send(&model.OutgoingMessage{
-			Type:    model.MsgError,
-			Payload: model.ErrorPayload{Message: err.Error()},
-		})
+	if err != nil {
+		if target != nil {
+			_ = target.Send(&model.OutgoingMessage{
+				Type:    model.MsgError,
+				Payload: model.ErrorPayload{Message: err.Error()},
+			})
+		}
+		return
 	}
+
+	sendToClients(clients, &model.OutgoingMessage{
+		Type:    model.MsgRoomPlayerStatus,
+		Payload: model.RoomPlayerStatusPayload{Players: players},
+	})
 }
 
 // runが今も実行中の場合だけ、ゲーム由来のエラーを送る。
@@ -474,6 +493,7 @@ func (h *Hub) buildPlayerList() []model.PlayerInfo {
 			Nickname: c.Nickname,
 			IsHost:   c.IsHost,
 			JoinSeq:  c.JoinSeq,
+			InLobby:  c.InLobby,
 		})
 	}
 	return list
@@ -499,6 +519,8 @@ func (h *Hub) HandleMessage(client *Client, data []byte) {
 	switch msg.Type {
 	case model.MsgRoomJoin:
 		h.handleRoomJoin(client, msg.Payload)
+	case model.MsgRoomBackToLobby:
+		h.handleRoomBackToLobby(client)
 	case model.MsgGameStart:
 		h.handleGameStart(client, msg.Payload)
 	default:
@@ -569,6 +591,34 @@ func (h *Hub) handleRoomJoin(client *Client, payload json.RawMessage) {
 	})
 }
 
+// ロビー画面に戻ったことの通知。ゲーム結果画面から抜けた各クライアントが送る。
+// 全員がこれを送るまで、次の game:start はサーバー側で拒否される。
+func (h *Hub) handleRoomBackToLobby(client *Client) {
+	// 一覧配信を他の在席状況・退出イベントと直列化する。
+	h.broadcastMu.Lock()
+	defer h.broadcastMu.Unlock()
+
+	h.mu.Lock()
+	if h.destroyed {
+		h.mu.Unlock()
+		return
+	}
+	c, exists := h.clients[client.PlayerID]
+	if !exists {
+		h.mu.Unlock()
+		return
+	}
+	c.InLobby = true
+	players := h.buildPlayerList()
+	clients := h.copyClients()
+	h.mu.Unlock()
+
+	sendToClients(clients, &model.OutgoingMessage{
+		Type:    model.MsgRoomPlayerStatus,
+		Payload: model.RoomPlayerStatusPayload{Players: players},
+	})
+}
+
 // ゲーム開始。ホスト以外・進行中は弾く。payload の game_mode で進行ロジックを選ぶ。
 func (h *Hub) handleGameStart(client *Client, payload json.RawMessage) {
 	var p model.GameStartPayload
@@ -587,6 +637,13 @@ func (h *Hub) handleGameStart(client *Client, payload json.RawMessage) {
 		h.mu.Unlock()
 		h.SendError(client.PlayerID, "game already in progress")
 		return
+	}
+	for _, c := range h.clients { // 全員がロビー画面に戻っているか（前回のゲーム結果画面に残っていないか）
+		if !c.InLobby {
+			h.mu.Unlock()
+			h.SendError(client.PlayerID, "waiting for all players to return to the lobby")
+			return
+		}
 	}
 	game, err := newGame(p.GameMode, h.questionRepo)
 	if err != nil {
