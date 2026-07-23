@@ -5,31 +5,34 @@ import "encoding/json"
 // メッセージ種別。JSON の {"type": "..."} に入る値。
 const (
 	// クライアント → サーバー
-	MsgRoomJoin   = "room:join"   // 入室
-	MsgGameStart  = "game:start"  // ゲーム開始（ホストのみ）
-	MsgGameVote   = "game:vote"   // 投票（イノシシパニック）
-	MsgGameAnswer = "game:answer" // 回答（モジオーダー：現ターンのプレイヤーのみ）
-	MsgGamePiaceSubmit = "game:piace_submit" // 担当マスの1文字を送信（コトバピース）
+	MsgRoomJoin         = "room:join"          // 入室
+	MsgGameStart        = "game:start"         // ゲーム開始（ホストのみ）
+	MsgGameVote         = "game:vote"          // 投票（イノシシパニック）
+	MsgGameAnswer       = "game:answer"        // 回答（モジオーダー：現ターンのプレイヤーのみ）
+	MsgGamePiaceSubmit  = "game:piace_submit"  // 担当マスの1文字を送信（コトバピース）
 	MsgGameBulletSubmit = "game:bullet_submit" // 回答を送信（ゾンビバレット：現ターンのプレイヤーのみ）
 
 	// サーバー → クライアント
-	MsgRoomJoined       = "room:joined"         // 入室確認（本人へ）
-	MsgRoomPlayerJoined = "room:player_joined"  // 入室通知（全員へ）
-	MsgRoomDestroyed    = "room:destroyed"      // ルーム破棄
-	MsgGameRoundStart   = "game:round_start"    // ラウンド開始（イノシシ）
-	MsgGameVoteReceived = "game:vote_received"  // 投票進捗（イノシシ）
-	MsgGameRoundResult  = "game:round_result"   // ラウンド結果（イノシシ）
-	MsgGameTurnStart    = "game:turn_start"     // ターン開始（モジオーダー）
-	MsgGameAnswerResult = "game:answer_result"  // 回答結果（モジオーダー）
+	MsgRoomJoined           = "room:joined"             // 入室確認（本人へ）
+	MsgRoomPlayerJoined     = "room:player_joined"      // 入室通知（全員へ）
+	MsgRoomPlayerLeft       = "room:player_left"        // 参加者退出・一覧更新通知（残り全員へ）
+	MsgRoomDestroyed        = "room:destroyed"          // ルーム破棄
+	MsgGameRoundStart       = "game:round_start"        // ラウンド開始（イノシシ）
+	MsgGameVoteReceived     = "game:vote_received"      // 投票進捗（イノシシ）
+	MsgGameRoundResult      = "game:round_result"       // ラウンド結果（イノシシ）
+	MsgGameTurnStart        = "game:turn_start"         // ターン開始（モジオーダー）
+	MsgGameAnswerResult     = "game:answer_result"      // 回答結果（モジオーダー）
 	MsgGamePiaceRoundStart  = "game:piace_round_start"  // ラウンド開始（コトバピース）
 	MsgGamePiaceProgress    = "game:piace_progress"     // 入力進捗（コトバピース）
 	MsgGamePiaceRoundResult = "game:piace_round_result" // ラウンド結果（コトバピース）
-	MsgGameBulletStart  = "game:bullet_start"   // ゲーム開始（ゾンビバレット）
-	MsgGameBulletHit    = "game:bullet_hit"     // 命中＝正解（ゾンビバレット）
-	MsgGameBulletMiss   = "game:bullet_miss"    // ミス＝不正解/重複（ゾンビバレット）
-	MsgGameOver         = "game:over"           // ゲームオーバー
-	MsgGameClear        = "game:clear"          // 全クリア
-	MsgError            = "error"               // エラー
+	MsgGameBulletStart      = "game:bullet_start"       // ゲーム開始（ゾンビバレット）
+	MsgGameBulletHit        = "game:bullet_hit"         // 命中＝正解（ゾンビバレット）
+	MsgGameBulletMiss       = "game:bullet_miss"        // ミス＝不正解/重複（ゾンビバレット）
+	MsgGamePlayerLeft       = "game:player_left"        // 対応ゲームの途中退出・継続状態
+	MsgGameOver             = "game:over"               // ゲームオーバー
+	MsgGameClear            = "game:clear"              // 全クリア
+	MsgGameCancelled        = "game:cancelled"          // 参加者退出によるゲーム中断
+	MsgError                = "error"                   // エラー
 )
 
 // 受信メッセージ。Payload は type を見てから個別の型へパースする。
@@ -85,16 +88,38 @@ type RoomPlayerJoinedPayload struct {
 	Players  []PlayerInfo `json:"players"`
 }
 
+type RoomPlayerLeftPayload struct {
+	PlayerID string       `json:"player_id"`
+	Nickname string       `json:"nickname"`
+	Players  []PlayerInfo `json:"players"`
+}
+
 type RoomDestroyedPayload struct {
 	Reason               string `json:"reason"`
 	DisconnectedPlayerID string `json:"disconnected_player_id"`
 }
 
+type GameCancelledPayload struct {
+	Reason               string `json:"reason"`
+	DisconnectedPlayerID string `json:"disconnected_player_id"`
+}
+
+// 途中退出後も続行できるゲームの更新状態。
+// CurrentPlayerID はゾンビバレット、VotedCount はイノシシパニックで使用する。
+type GamePlayerLeftPayload struct {
+	DisconnectedPlayerID string       `json:"disconnected_player_id"`
+	DisconnectedNickname string       `json:"disconnected_nickname"`
+	Players              []PlayerInfo `json:"players"`
+	CurrentPlayerID      string       `json:"current_player_id,omitempty"`
+	VotedCount           int          `json:"voted_count"`
+	TotalCount           int          `json:"total_count"`
+}
+
 type GameRoundStartPayload struct {
-	Round        int      `json:"round"`          // ラウンド番号（1始まり）
+	Round        int      `json:"round"` // ラウンド番号（1始まり）
 	TotalRounds  int      `json:"total_rounds"`
 	Question     string   `json:"question"`
-	Choices      []string `json:"choices"`        // [A, B]
+	Choices      []string `json:"choices"` // [A, B]
 	TimeLimitSec int      `json:"time_limit_sec"`
 }
 
@@ -119,8 +144,8 @@ type GameTurnStartPayload struct {
 	TotalRounds     int    `json:"total_rounds"`      // = 参加人数
 	CurrentPlayerID string `json:"current_player_id"` // このターンの回答者
 	Nickname        string `json:"nickname"`
-	Question        string `json:"question"`          // 表示する漢字 or 読み
-	Direction       string `json:"direction"`         // kanji_to_reading / reading_to_kanji
+	Question        string `json:"question"`  // 表示する漢字 or 読み
+	Direction       string `json:"direction"` // kanji_to_reading / reading_to_kanji
 	TimeLimitSec    int    `json:"time_limit_sec"`
 }
 
@@ -134,7 +159,7 @@ type GameAnswerResultPayload struct {
 }
 
 type GameOverPayload struct {
-	Reason     string `json:"reason"`              // wrong_answer / tie / timeout_tie / timeout
+	Reason     string `json:"reason"` // wrong_answer / tie / timeout_tie / timeout
 	FinalRound int    `json:"final_round"`
 	PlayerID   string `json:"player_id,omitempty"` // モジオーダーで脱落したプレイヤー
 }
@@ -213,8 +238,8 @@ type BulletStartPayload struct {
 
 // 命中（正解）。命中数・既出一覧・次のターンを配信する。
 type BulletHitPayload struct {
-	PlayerID        string   `json:"player_id"`         // 命中させたプレイヤー
-	Answer          string   `json:"answer"`            // 表示用の正解文字列
+	PlayerID        string   `json:"player_id"` // 命中させたプレイヤー
+	Answer          string   `json:"answer"`    // 表示用の正解文字列
 	CorrectCount    int      `json:"correct_count"`
 	TargetHits      int      `json:"target_hits"`
 	CurrentPlayerID string   `json:"current_player_id"` // 次のターン

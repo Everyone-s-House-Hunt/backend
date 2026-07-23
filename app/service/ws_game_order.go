@@ -41,7 +41,7 @@ func NewMojiOrder(qr QuestionRepo) *MojiOrder {
 }
 
 // ゲーム全体を進行させる。参加順に1人1問ずつ出題し、誰か誤答で即終了、全員正答でクリア。
-func (g *MojiOrder) Start(hub *Hub) error {
+func (g *MojiOrder) Start(hub *Hub, gameCtx context.Context, runID uint64) error {
 	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）
 	total := len(players)
 	if total == 0 {
@@ -84,7 +84,7 @@ func (g *MojiOrder) Start(hub *Hub) error {
 		}
 
 		// 誰の番か・問題・制限時間を全員へ配信
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGameTurnStart,
 			Payload: model.GameTurnStartPayload{
 				Round:           roundNum,
@@ -98,7 +98,7 @@ func (g *MojiOrder) Start(hub *Hub) error {
 		})
 
 		// 回答 or 時間切れ のどちらか早いほうまで待つ
-		turnCtx, cancel := context.WithTimeout(hub.Context(), orderTimeLimitSec*time.Second)
+		turnCtx, cancel := context.WithTimeout(gameCtx, orderTimeLimitSec*time.Second)
 		var answer string
 		timedOut := false
 		select {
@@ -109,7 +109,7 @@ func (g *MojiOrder) Start(hub *Hub) error {
 			timedOut = true
 		}
 
-		if hub.Context().Err() != nil { // ルーム破棄なら中止
+		if gameCtx.Err() != nil { // ルーム破棄・ゲーム中断なら中止
 			return nil
 		}
 
@@ -117,7 +117,7 @@ func (g *MojiOrder) Start(hub *Hub) error {
 		isCorrect := !timedOut && matchAnswer(answer, answerData.Answers)
 
 		// 回答結果を配信
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGameAnswerResult,
 			Payload: model.GameAnswerResultPayload{
 				Round:         roundNum,
@@ -133,7 +133,7 @@ func (g *MojiOrder) Start(hub *Hub) error {
 			if timedOut {
 				reason = "timeout"
 			}
-			hub.Broadcast(&model.OutgoingMessage{
+			hub.BroadcastGame(runID, &model.OutgoingMessage{
 				Type: model.MsgGameOver,
 				Payload: model.GameOverPayload{
 					Reason:     reason,
@@ -141,29 +141,27 @@ func (g *MojiOrder) Start(hub *Hub) error {
 					PlayerID:   p.PlayerID,
 				},
 			})
-			hub.SetState(StateFinished)
 			return nil
 		}
 
 		// 次ターンまで少し待つ（破棄されたら中止）
 		select {
-		case <-hub.Context().Done():
+		case <-gameCtx.Done():
 			return nil
 		case <-time.After(orderResultPauseSec * time.Second):
 		}
 	}
 
 	// 全員正答 → クリア
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type:    model.MsgGameClear,
 		Payload: model.GameClearPayload{TotalRounds: totalRounds},
 	})
-	hub.SetState(StateFinished)
 	return nil
 }
 
 // ゲーム中メッセージのうち game:answer を処理する。GameLogic を実装。
-func (g *MojiOrder) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
+func (g *MojiOrder) HandleMessage(hub *Hub, runID uint64, playerID, msgType string, payload json.RawMessage) error {
 	if msgType != model.MsgGameAnswer {
 		return fmt.Errorf("unsupported message type: %s", msgType)
 	}
