@@ -37,7 +37,7 @@ func NewInoshishiPanic(qr QuestionRepo) *InoshishiPanic {
 }
 
 // ゲーム全体を進行させる。1問ずつラウンドを回し、ゲームオーバーか全クリアで終わる。
-func (g *InoshishiPanic) Start(hub *Hub) error {
+func (g *InoshishiPanic) Start(hub *Hub, gameCtx context.Context, runID uint64) error {
 	questions, err := g.questionRepo.GetRandomByGameMode(inoshishiGameMode, inoshishiQuestions)
 	if err != nil {
 		return fmt.Errorf("failed to fetch questions: %w", err)
@@ -65,7 +65,7 @@ func (g *InoshishiPanic) Start(hub *Hub) error {
 		g.mu.Unlock()
 
 		// 問題・選択肢・制限時間を配信
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGameRoundStart,
 			Payload: model.GameRoundStartPayload{
 				Round:        roundNum,
@@ -77,7 +77,7 @@ func (g *InoshishiPanic) Start(hub *Hub) error {
 		})
 
 		// 全員投票 or 時間切れ のどちらか早いほうまで待つ
-		roundCtx, cancel := context.WithTimeout(hub.Context(), inoshishiTimeLimitSec*time.Second)
+		roundCtx, cancel := context.WithTimeout(gameCtx, inoshishiTimeLimitSec*time.Second)
 		timedOut := false
 		select {
 		case <-roundCh: // 全員投票完了 → 即判定
@@ -87,7 +87,7 @@ func (g *InoshishiPanic) Start(hub *Hub) error {
 			timedOut = true
 		}
 
-		if hub.Context().Err() != nil { // ルーム破棄なら中止
+		if gameCtx.Err() != nil { // ルーム破棄・ゲーム中断なら中止
 			return nil
 		}
 
@@ -142,7 +142,7 @@ func (g *InoshishiPanic) Start(hub *Hub) error {
 		}
 
 		// ラウンド結果を配信
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGameRoundResult,
 			Payload: model.GameRoundResultPayload{
 				Round:        roundNum,
@@ -154,36 +154,34 @@ func (g *InoshishiPanic) Start(hub *Hub) error {
 		})
 
 		if gameEnd {
-			hub.Broadcast(&model.OutgoingMessage{
+			hub.BroadcastGame(runID, &model.OutgoingMessage{
 				Type: model.MsgGameOver,
 				Payload: model.GameOverPayload{
 					Reason:     gameOverReason,
 					FinalRound: roundNum,
 				},
 			})
-			hub.SetState(StateFinished)
 			return nil
 		}
 
 		// 次ラウンドまで少し待つ（破棄されたら中止）
 		select {
-		case <-hub.Context().Done():
+		case <-gameCtx.Done():
 			return nil
 		case <-time.After(inoshishiResultPauseSec * time.Second):
 		}
 	}
 
 	// 全問正解 → クリア
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type:    model.MsgGameClear,
 		Payload: model.GameClearPayload{TotalRounds: totalRounds},
 	})
-	hub.SetState(StateFinished)
 	return nil
 }
 
 // ゲーム中メッセージのうち game:vote を処理する。GameLogic を実装。
-func (g *InoshishiPanic) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
+func (g *InoshishiPanic) HandleMessage(hub *Hub, runID uint64, playerID, msgType string, payload json.RawMessage) error {
 	if msgType != model.MsgGameVote {
 		return fmt.Errorf("unsupported message type: %s", msgType)
 	}
@@ -191,11 +189,11 @@ func (g *InoshishiPanic) HandleMessage(hub *Hub, playerID, msgType string, paylo
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return errors.New("invalid game:vote payload")
 	}
-	return g.handleVote(hub, playerID, p.ChoiceIndex)
+	return g.handleVote(hub, runID, playerID, p.ChoiceIndex)
 }
 
 // 1人分の投票を受け付ける。複数人が同時に投票しても壊れないようロックする。
-func (g *InoshishiPanic) handleVote(hub *Hub, playerID string, choiceIndex int) error {
+func (g *InoshishiPanic) handleVote(hub *Hub, runID uint64, playerID string, choiceIndex int) error {
 	if choiceIndex != 0 && choiceIndex != 1 {
 		return errors.New("invalid choice_index: must be 0 or 1")
 	}
@@ -213,7 +211,7 @@ func (g *InoshishiPanic) handleVote(hub *Hub, playerID string, choiceIndex int) 
 	g.mu.Unlock()
 
 	// 投票進捗を全員に通知（内容は伏せる）
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type: model.MsgGameVoteReceived,
 		Payload: model.GameVoteReceivedPayload{
 			PlayerID:   playerID,

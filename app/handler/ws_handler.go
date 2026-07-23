@@ -38,7 +38,7 @@ func (h *WSHandler) Connect(c *gin.Context) {
 
 	var hub *service.Hub
 	if isCreate {
-		created, ok := h.RoomManager.CreateRoom(roomID)
+		created, ok := h.RoomManager.CreateRoomWithHost(roomID, client)
 		if !ok { // フロント生成の6桁IDが衝突。フロントは振り直して再試行する
 			rejectAndClose(client, "room already exists")
 			return
@@ -51,14 +51,13 @@ func (h *WSHandler) Connect(c *gin.Context) {
 			return
 		}
 		hub = existing
+		// 参加はゲーム開始前かつ5人未満の場合だけ許可する。
+		if err := hub.Register(client, false); err != nil {
+			rejectAndClose(client, err.Error())
+			return
+		}
 	}
-
-	// 作成者だけがホスト。取得〜登録の間に破棄されたルームには入れない。
-	if !hub.Register(client, isCreate) {
-		rejectAndClose(client, "room not found")
-		return
-	}
-	defer hub.Unregister(client) // 切断時にルーム破棄・通知を行う
+	defer hub.Unregister(client) // 切断時に退出者だけを除去し、残りの接続は維持する
 
 	go client.KeepAlive(30*time.Second, 10*time.Second)
 

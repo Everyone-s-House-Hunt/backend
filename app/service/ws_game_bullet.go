@@ -61,7 +61,7 @@ func bulletTurnIndex(correctCount, playerCount int) int {
 }
 
 // ゲーム全体を進行させる。正解10個以上のお題を1問使い、全体タイマーで撃破か時間切れを待つ。
-func (g *Bullet) Start(hub *Hub) error {
+func (g *Bullet) Start(hub *Hub, gameCtx context.Context, runID uint64) error {
 	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）= 往復順の基準
 	if len(players) == 0 {
 		return errors.New("no players")
@@ -114,7 +114,7 @@ func (g *Bullet) Start(hub *Hub) error {
 		bps = append(bps, model.BulletPlayer{Position: i, PlayerID: p.PlayerID, Nickname: p.Nickname})
 	}
 
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type: model.MsgGameBulletStart,
 		Payload: model.BulletStartPayload{
 			Question:        chosen.Question,
@@ -126,24 +126,24 @@ func (g *Bullet) Start(hub *Hub) error {
 	})
 
 	// 撃破 or 時間切れ のどちらか早いほうまで待つ（進行は HandleMessage 側）
-	ctx, cancel := context.WithTimeout(hub.Context(), bulletTimeLimitSec*time.Second)
+	ctx, cancel := context.WithTimeout(gameCtx, bulletTimeLimitSec*time.Second)
 	defer cancel()
 
 	select {
 	case <-roundCh: // 10命中 → 撃破クリア
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type:    model.MsgGameClear,
 			Payload: model.GameClearPayload{TotalRounds: bulletTargetHits},
 		})
 	case <-ctx.Done():
-		if hub.Context().Err() != nil { // ルーム破棄なら中止
+		if gameCtx.Err() != nil { // ルーム破棄・ゲーム中断なら中止
 			return nil
 		}
 		// 時間切れ → ゲームオーバー。以後の submit を弾く
 		g.mu.Lock()
 		g.finished = true
 		g.mu.Unlock()
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGameOver,
 			Payload: model.GameOverPayload{
 				Reason:     "timeout",
@@ -152,13 +152,12 @@ func (g *Bullet) Start(hub *Hub) error {
 		})
 	}
 
-	hub.SetState(StateFinished)
 	return nil
 }
 
 // ゲーム中メッセージのうち game:bullet_submit を処理する。GameLogic を実装。
 // ここにゲーム進行（正誤判定・ターン移行・撃破判定）を集約する。
-func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
+func (g *Bullet) HandleMessage(hub *Hub, runID uint64, playerID, msgType string, payload json.RawMessage) error {
 	if msgType != model.MsgGameBulletSubmit {
 		return fmt.Errorf("unsupported message type: %s", msgType)
 	}
@@ -190,7 +189,7 @@ func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.
 		current := g.players[g.turnIndex].PlayerID
 		g.mu.Unlock()
 
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGameBulletMiss,
 			Payload: model.BulletMissPayload{
 				PlayerID:        playerID,
@@ -224,7 +223,7 @@ func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.
 	ch := g.doneCh
 	g.mu.Unlock()
 
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type: model.MsgGameBulletHit,
 		Payload: model.BulletHitPayload{
 			PlayerID:        playerID,

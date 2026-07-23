@@ -41,7 +41,7 @@ func NewPiace(qr QuestionRepo) *Piace {
 }
 
 // ゲーム全体を進行させる。文字数が人数に一致する問題だけを使い、1問ずつラウンドを回す。
-func (g *Piace) Start(hub *Hub) error {
+func (g *Piace) Start(hub *Hub, gameCtx context.Context, runID uint64) error {
 	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）
 	n := len(players)
 	if n == 0 {
@@ -108,7 +108,7 @@ func (g *Piace) Start(hub *Hub) error {
 		g.mu.Unlock()
 
 		// お題・マス数・担当・制限時間を配信
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGamePiaceRoundStart,
 			Payload: model.PiaceRoundStartPayload{
 				Round:        roundNum,
@@ -121,7 +121,7 @@ func (g *Piace) Start(hub *Hub) error {
 		})
 
 		// 全員入力 or 時間切れ のどちらか早いほうまで待つ
-		roundCtx, cancel := context.WithTimeout(hub.Context(), piaceTimeLimitSec*time.Second)
+		roundCtx, cancel := context.WithTimeout(gameCtx, piaceTimeLimitSec*time.Second)
 		timedOut := false
 		select {
 		case <-roundCh: // 全員入力完了 → 即判定
@@ -131,7 +131,7 @@ func (g *Piace) Start(hub *Hub) error {
 			timedOut = true
 		}
 
-		if hub.Context().Err() != nil { // ルーム破棄なら中止
+		if gameCtx.Err() != nil { // ルーム破棄・ゲーム中断なら中止
 			return nil
 		}
 
@@ -166,7 +166,7 @@ func (g *Piace) Start(hub *Hub) error {
 		}
 
 		// ラウンド結果を配信
-		hub.Broadcast(&model.OutgoingMessage{
+		hub.BroadcastGame(runID, &model.OutgoingMessage{
 			Type: model.MsgGamePiaceRoundResult,
 			Payload: model.PiaceRoundResultPayload{
 				Round:         roundNum,
@@ -182,36 +182,34 @@ func (g *Piace) Start(hub *Hub) error {
 			if timedOut {
 				reason = "timeout"
 			}
-			hub.Broadcast(&model.OutgoingMessage{
+			hub.BroadcastGame(runID, &model.OutgoingMessage{
 				Type: model.MsgGameOver,
 				Payload: model.GameOverPayload{
 					Reason:     reason,
 					FinalRound: roundNum,
 				},
 			})
-			hub.SetState(StateFinished)
 			return nil
 		}
 
 		// 次ラウンドまで少し待つ（破棄されたら中止）
 		select {
-		case <-hub.Context().Done():
+		case <-gameCtx.Done():
 			return nil
 		case <-time.After(piaceResultPauseSec * time.Second):
 		}
 	}
 
 	// 全問正解 → クリア
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type:    model.MsgGameClear,
 		Payload: model.GameClearPayload{TotalRounds: totalRounds},
 	})
-	hub.SetState(StateFinished)
 	return nil
 }
 
 // ゲーム中メッセージのうち game:piace_submit を処理する。GameLogic を実装。
-func (g *Piace) HandleMessage(hub *Hub, playerID, msgType string, payload json.RawMessage) error {
+func (g *Piace) HandleMessage(hub *Hub, runID uint64, playerID, msgType string, payload json.RawMessage) error {
 	if msgType != model.MsgGamePiaceSubmit {
 		return fmt.Errorf("unsupported message type: %s", msgType)
 	}
@@ -237,7 +235,7 @@ func (g *Piace) HandleMessage(hub *Hub, playerID, msgType string, payload json.R
 	g.mu.Unlock()
 
 	// 入力進捗を全員に通知（内容は伏せる）
-	hub.Broadcast(&model.OutgoingMessage{
+	hub.BroadcastGame(runID, &model.OutgoingMessage{
 		Type: model.MsgGamePiaceProgress,
 		Payload: model.PiaceProgressPayload{
 			FilledCount: filledCount,

@@ -30,6 +30,24 @@ func (rm *RoomManager) CreateRoom(roomID string) (*Hub, bool) {
 	return hub, true
 }
 
+// ルームを作成し、公開前に作成者をホストとして登録する。
+// 作成直後の同時参加でホストの5人枠が奪われる競合を防ぐ。
+func (rm *RoomManager) CreateRoomWithHost(roomID string, host *Client) (*Hub, bool) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	if _, ok := rm.rooms[roomID]; ok {
+		return nil, false
+	}
+
+	hub := NewHub(roomID, rm, rm.questionRepo)
+	if err := hub.Register(host, true); err != nil {
+		return nil, false
+	}
+	rm.rooms[roomID] = hub
+	return hub, true
+}
+
 // roomID のルームを返す（作成はしない）。参加は既存ルームに限る。
 func (rm *RoomManager) GetRoom(roomID string) (*Hub, bool) {
 	rm.mu.RLock()
