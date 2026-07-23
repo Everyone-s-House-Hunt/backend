@@ -5,17 +5,19 @@ import "encoding/json"
 // メッセージ種別。JSON の {"type": "..."} に入る値。
 const (
 	// クライアント → サーバー
-	MsgRoomJoin         = "room:join"          // 入室
-	MsgGameStart        = "game:start"         // ゲーム開始（ホストのみ）
-	MsgGameVote         = "game:vote"          // 投票（イノシシパニック）
-	MsgGameAnswer       = "game:answer"        // 回答（モジオーダー：現ターンのプレイヤーのみ）
-	MsgGamePiaceSubmit  = "game:piace_submit"  // 担当マスの1文字を送信（コトバピース）
-	MsgGameBulletSubmit = "game:bullet_submit" // 回答を送信（ゾンビバレット：現ターンのプレイヤーのみ）
+	MsgRoomJoin         = "room:join"           // 入室
+	MsgRoomBackToLobby  = "room:back_to_lobby"  // ロビー画面に戻ったことを通知
+	MsgGameStart        = "game:start"          // ゲーム開始（ホストのみ）
+	MsgGameVote         = "game:vote"           // 投票（イノシシパニック）
+	MsgGameAnswer       = "game:answer"         // 回答（モジオーダー：現ターンのプレイヤーのみ）
+	MsgGamePiaceSubmit  = "game:piace_submit"   // 担当マスの1文字を送信（コトバピース）
+	MsgGameBulletSubmit = "game:bullet_submit"  // 回答を送信（ゾンビバレット：現ターンのプレイヤーのみ）
 
 	// サーバー → クライアント
 	MsgRoomJoined           = "room:joined"             // 入室確認（本人へ）
 	MsgRoomPlayerJoined     = "room:player_joined"      // 入室通知（全員へ）
 	MsgRoomPlayerLeft       = "room:player_left"        // 参加者退出・一覧更新通知（残り全員へ）
+	MsgRoomPlayerStatus     = "room:player_status"      // ロビー在席状況の更新通知（全員へ）
 	MsgRoomDestroyed        = "room:destroyed"          // ルーム破棄
 	MsgGameRoundStart       = "game:round_start"        // ラウンド開始（イノシシ）
 	MsgGameVoteReceived     = "game:vote_received"      // 投票進捗（イノシシ）
@@ -53,6 +55,7 @@ type PlayerInfo struct {
 	Nickname string `json:"nickname"`
 	IsHost   bool   `json:"is_host"`
 	JoinSeq  int    `json:"join_seq"` // 参加順（フロントの一覧表示・ターン順に使う）
+	InLobby  bool   `json:"in_lobby"` // ロビー画面に戻っている（room:back_to_lobby送信済み）か
 }
 
 // --- 各メッセージの payload ---
@@ -92,6 +95,11 @@ type RoomPlayerLeftPayload struct {
 	PlayerID string       `json:"player_id"`
 	Nickname string       `json:"nickname"`
 	Players  []PlayerInfo `json:"players"`
+}
+
+// ロビー在席状況の更新。room:back_to_lobby受信時とゲーム終了時に配信する。
+type RoomPlayerStatusPayload struct {
+	Players []PlayerInfo `json:"players"`
 }
 
 type RoomDestroyedPayload struct {
