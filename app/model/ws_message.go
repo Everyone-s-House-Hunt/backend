@@ -195,7 +195,7 @@ type BulletSubmitPayload struct {
 	Answer string `json:"answer"`
 }
 
-// 固定ループ順の1プレイヤー。
+// 往復順の基準となる参加順の1プレイヤー。
 type BulletPlayer struct {
 	Position int    `json:"position"`
 	PlayerID string `json:"player_id"`
@@ -207,7 +207,7 @@ type BulletStartPayload struct {
 	Question        string         `json:"question"`
 	TargetHits      int            `json:"target_hits"`       // = 10
 	TimeLimitSec    int            `json:"time_limit_sec"`    // = 60
-	Players         []BulletPlayer `json:"players"`           // 固定ループ順
+	Players         []BulletPlayer `json:"players"`           // 往復順の基準となる参加順
 	CurrentPlayerID string         `json:"current_player_id"` // 先頭のターン
 }
 

@@ -15,6 +15,7 @@ const (
 	bulletGameMode     = "bullet"
 	bulletTimeLimitSec = 60 // 全体で共有する制限時間
 	bulletTargetHits   = 10 // 撃破に必要な命中（正解）数
+	bulletMaxPlayers   = 5  // 5レーンに配置できる最大参加人数
 	bulletFetchPool    = 30 // 正解数フィルタ用に多めに取得する件数
 )
 
@@ -30,7 +31,7 @@ type bulletAnswerData struct {
 type Bullet struct {
 	questionRepo QuestionRepo
 	mu           sync.Mutex
-	players      []model.PlayerInfo // 参加順スナップショット（固定ループ順）
+	players      []model.PlayerInfo // 参加順スナップショット（往復順の基準）
 	turnIndex    int                // 現ターン = players[turnIndex]
 	answerNorm   map[string]string  // 正規化した正解 → 表示用の元文字列
 	used         map[string]bool    // 既に正解された正規化キー
@@ -43,11 +44,30 @@ func NewBullet(qr QuestionRepo) *Bullet {
 	return &Bullet{questionRepo: qr}
 }
 
+// 正解数から次の回答者を決める。両端を2回ずつ通る往復順を繰り返す。
+// 例: 5人なら 0,1,2,3,4,4,3,2,1,0、3人なら 0,1,2,2,1,0,...
+func bulletTurnIndex(correctCount, playerCount int) int {
+	if playerCount <= 1 {
+		return 0
+	}
+	step := correctCount % (playerCount * 2)
+	if step < 0 {
+		step += playerCount * 2
+	}
+	if step < playerCount {
+		return step
+	}
+	return playerCount*2 - 1 - step
+}
+
 // ゲーム全体を進行させる。正解10個以上のお題を1問使い、全体タイマーで撃破か時間切れを待つ。
 func (g *Bullet) Start(hub *Hub) error {
-	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）= 固定ループ順
+	players := hub.OrderedPlayers() // 参加順（JoinSeq 昇順）= 往復順の基準
 	if len(players) == 0 {
 		return errors.New("no players")
+	}
+	if len(players) > bulletMaxPlayers {
+		return fmt.Errorf("zombie bullet supports at most %d players", bulletMaxPlayers)
 	}
 
 	// プールから取得し、正解が目標数以上ある問題を1つ採用する
@@ -88,7 +108,7 @@ func (g *Bullet) Start(hub *Hub) error {
 	g.finished = false
 	g.mu.Unlock()
 
-	// 固定ループ順を作って配信
+	// 往復順の基準となる参加順を配信
 	bps := make([]model.BulletPlayer, 0, len(players))
 	for i, p := range players {
 		bps = append(bps, model.BulletPlayer{Position: i, PlayerID: p.PlayerID, Nickname: p.Nickname})
@@ -182,13 +202,15 @@ func (g *Bullet) HandleMessage(hub *Hub, playerID, msgType string, payload json.
 		return nil
 	}
 
-	// 命中（正解）→ 記録してターンを次へ
+	// 命中（正解）→ 記録し、クリア前なら往復順で次の回答者へ
 	g.used[norm] = true
 	g.correctCount++
-	g.turnIndex = (g.turnIndex + 1) % n
 	correctCount := g.correctCount
-	nextPlayer := g.players[g.turnIndex].PlayerID
 	cleared := correctCount >= bulletTargetHits
+	if !cleared {
+		g.turnIndex = bulletTurnIndex(correctCount, n)
+	}
+	nextPlayer := g.players[g.turnIndex].PlayerID
 
 	used := make([]string, 0, len(g.used))
 	for k := range g.answerNorm {
